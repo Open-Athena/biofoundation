@@ -1,6 +1,6 @@
 # BioFoundation
 
-An ecosystem for users of biological foundation models.
+An ecosystem for biological foundation models.
 
 ## Installation
 
@@ -15,6 +15,15 @@ Install the package:
 
 ```bash
 uv pip install -e .
+```
+
+## Additional Dependencies
+
+Some features require additional packages:
+
+```bash
+# For PlantCad1
+uv pip install mamba-ssm
 ```
 
 ## Usage
