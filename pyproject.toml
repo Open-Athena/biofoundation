@@ -2,11 +2,36 @@
 name = "biofoundation"
 version = "0.1.0"
 description = "An ecosystem for users of biological foundation models"
-requires-python = ">=3.9"
+requires-python = ">=3.13"
 dependencies = [
     "datasets",
+    "jaxtyping",
     "numpy",
     "pandas",
     "scikit-learn",
     "transformers[torch]",
 ]
+
+[project.optional-dependencies]
+mamba = [
+  "causal-conv1d==1.5.0.post8",
+  "mamba-ssm==2.2.4",
+]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+causal-conv1d = { git = "https://github.com/Dao-AILab/causal-conv1d", tag = "v1.5.0.post8" }
+mamba-ssm = { git = "https://github.com/state-spaces/mamba", tag = "v2.2.4" }
+
+[tool.uv]
+no-build-isolation-package = ["mamba-ssm", "causal-conv1d"]
+
+[[tool.uv.dependency-metadata]]
+name = "mamba-ssm"
+version = "2.2.4"
+requires-dist = ["torch", "einops"]
+
+[[tool.uv.dependency-metadata]]
+name = "causal-conv1d"
+version = "1.5.0.post8"
+requires-dist = ["torch", "einops"]

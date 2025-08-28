@@ -19,11 +19,9 @@ uv pip install -e .
 
 ## Additional Dependencies
 
-Some features require additional packages:
-
 ```bash
-# For PlantCad1
-uv pip install mamba-ssm
+# PlantCad1
+uv pip install -e .[mamba]
 ```
 
 ## Usage
@@ -31,5 +29,5 @@ uv pip install mamba-ssm
 Run the example script:
 
 ```bash
-python example.py
+uv run python example.py
 ```
