@@ -29,5 +29,6 @@ uv pip install -e .[mamba]
 Run the example script:
 
 ```bash
-uv run python example.py
+source .venv/bin/activate
+python example.py
 ```

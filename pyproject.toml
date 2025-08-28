@@ -35,3 +35,7 @@ requires-dist = ["torch", "einops"]
 name = "causal-conv1d"
 version = "1.5.0.post8"
 requires-dist = ["torch", "einops"]
+
+[tool.ruff.lint]
+# Disable F722 (syntax error in forward annotation) for jaxtyping compatibility
+ignore = ["F722"]
