@@ -1,16 +1,15 @@
 import datasets
-from jaxtyping import Shaped
-import numpy as np
 import tempfile
 import torch.nn as nn
 from transformers import Trainer, TrainingArguments
+from typing import Any
 
 
 def run_inference(
     model: nn.Module,
     dataset: datasets.Dataset,
-    **kwargs,
-) -> Shaped[np.ndarray, "batch ..."]:
+    **kwargs: Any,
+) -> Any:
     training_args = TrainingArguments(
         output_dir=tempfile.TemporaryDirectory().name,
         **kwargs,

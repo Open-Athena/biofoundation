@@ -39,3 +39,14 @@ requires-dist = ["torch", "einops"]
 [tool.ruff.lint]
 # Disable F722 (syntax error in forward annotation) for jaxtyping compatibility
 ignore = ["F722"]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.3.0",
+    "ruff>=0.12.11",
+    "mypy>=1.17.0",
+]
+
+[tool.mypy]
+strict = true
+ignore_missing_imports = true
