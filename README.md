@@ -30,7 +30,7 @@ Run the example script:
 
 ```bash
 source .venv/bin/activate
-python example.py
+python examples/plantcad_evolutionary_constraint.py
 ```
 
 ## Development Setup
