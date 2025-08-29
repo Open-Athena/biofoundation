@@ -11,3 +11,4 @@ repos:
     hooks:
       - id: mypy
         exclude: ^tests/
+        entry: uv run mypy
