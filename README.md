@@ -1,3 +1,5 @@
+![BioFoundation Logo](docs/source/_static/logo.png)
+
 # BioFoundation
 
 An ecosystem for biological foundation models.
@@ -46,13 +48,6 @@ uv pip install -e . --group dev
 ```
 
 ## Development Tools
-
-This project uses several development tools:
-
-- **Ruff**: Code linting and formatting
-- **MyPy**: Type checking
-- **Pre-commit**: Git hooks for quality checks
-- **Pytest**: Testing framework
 
 ### Running Quality Checks
 
