@@ -45,8 +45,11 @@ dev = [
     "pre-commit>=4.3.0",
     "ruff>=0.12.11",
     "mypy>=1.17.0",
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
 ]
 
 [tool.mypy]
 strict = true
 ignore_missing_imports = true
+exclude = ["tests/"]
