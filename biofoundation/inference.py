@@ -1,11 +1,47 @@
 import datasets
 import tempfile
 import torch.nn as nn
-from transformers import Trainer, TrainingArguments
-from typing import Any
+from transformers import Trainer, TrainingArguments, PreTrainedTokenizerBase
+from typing import Any, Callable
+from functools import partial
+
+from .model import LanguageModel
+from .data import transform_reflogprob_mlm
+from .model import compute_reflogprob_mlm
 
 
 def run_inference(
+    model: LanguageModel,
+    tokenizer: PreTrainedTokenizerBase,  # TODO: create an adapter for this
+    dataset: datasets.Dataset,
+    compute_fn: Callable[..., Any],
+    data_transform_fn: Callable[..., dict[str, Any]] | None = None,
+    data_transform_on_the_fly: bool = False,
+    data_transform_kwargs: dict[str, Any] | None = None,
+    inference_kwargs: dict[str, Any] | None = None,
+) -> Any:
+    processed_dataset = _process_dataset(
+        dataset,
+        tokenizer,
+        data_transform_fn,
+        data_transform_on_the_fly,
+        data_transform_kwargs,
+    )
+    return _run_inference(
+        _ModelComputeFnWrapper(model, compute_fn),
+        processed_dataset,
+        **(inference_kwargs or {}),
+    )
+
+
+run_reflogprob_mlm = partial(
+    run_inference,
+    compute_fn=compute_reflogprob_mlm,
+    data_transform_fn=transform_reflogprob_mlm,
+)
+
+
+def _run_inference(
     model: nn.Module,
     dataset: datasets.Dataset,
     **kwargs: Any,
@@ -29,7 +65,55 @@ def run_inference(
     """
     training_args = TrainingArguments(
         output_dir=tempfile.TemporaryDirectory().name,
-        **kwargs,
+        **(kwargs or {}),
     )
     trainer = Trainer(model=model, args=training_args)
     return trainer.predict(test_dataset=dataset).predictions
+
+
+class _ModelComputeFnWrapper(nn.Module):
+    def __init__(self, model: LanguageModel, compute_fn: Callable[..., Any]):
+        super().__init__()
+        self.model = model
+        self.compute_fn = compute_fn
+
+    def forward(self, *args: Any, **kwargs: Any) -> Any:
+        return self.compute_fn(self.model, *args, **kwargs)
+
+
+def _process_dataset(
+    dataset: datasets.Dataset,
+    tokenizer: PreTrainedTokenizerBase,
+    data_transform_fn: Callable[..., dict[str, Any]] | None = None,
+    data_transform_on_the_fly: bool = False,
+    data_transform_kwargs: dict[str, Any] | None = None,
+) -> datasets.Dataset:
+    if data_transform_fn is None:
+        return dataset
+    data_transform_fn = partial(data_transform_fn, tokenizer=tokenizer)
+    if data_transform_on_the_fly:
+        return dataset.with_transform(
+            _make_batch_transform(data_transform_fn),
+            **data_transform_kwargs,
+        )
+    return dataset.map(
+        data_transform_fn,
+        **data_transform_kwargs,
+    )
+
+
+def _make_batch_transform(
+    transform_fn: Callable[[dict[str, Any]], dict[str, Any]],
+) -> Callable[[dict[str, list[Any]]], dict[str, list[Any]]]:
+    def batch_transform_fn(batch: dict[str, list[Any]]) -> dict[str, list[Any]]:
+        # Convert batch format to list of examples
+        examples = [dict(zip(batch.keys(), values)) for values in zip(*batch.values())]
+        # Apply transform to each example
+        transformed_examples = [transform_fn(example) for example in examples]
+        # Convert back to batch format
+        return {
+            key: [ex[key] for ex in transformed_examples]
+            for key in transformed_examples[0].keys()
+        }
+
+    return batch_transform_fn
