@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from torch import Tensor
 from transformers import PreTrainedModel
 from typing import cast
+from einops import rearrange, reduce
 
 
 class LanguageModel(ABC, nn.Module):
@@ -60,3 +61,55 @@ def compute_reflogprob_mlm(
     logprobs = F.log_softmax(logits, dim=-1)
     res = logprobs[batch_indices, ref]
     return res
+
+
+def compute_reflogprob_clm(
+    model: LanguageModel,
+    input_ids: Int[Tensor, "B 4 L"],
+    ref: Int[Tensor, " B"],
+) -> Float[Tensor, " B"]:
+    B = input_ids.shape[0]
+    batch_indices = torch.arange(B)
+    input_ids = rearrange(input_ids, "B V L -> (B V) L")
+    logits = model(input_ids)
+    log_prob = _clm_seq_logprob(logits, input_ids)
+    log_prob = rearrange(log_prob, "(B V) -> B V", B=B)
+    # marginal log-probability of each of the 4 alleles
+    marginal_log_prob = torch.log_softmax(log_prob, dim=-1)
+    ref_log_prob = marginal_log_prob[batch_indices, ref]
+    return ref_log_prob
+
+
+# https://github.com/ArcInstitute/evo2/blob/4c3c8522dc99d2dc14b5b5a07cd65f2b67e6f457/evo2/scoring.py#L37
+def _logits_to_logprobs(
+    logits: Float[Tensor, "B L V"],
+    input_ids: Int[Tensor, "B L"],
+) -> Float[Tensor, "B L"]:  # technically L-1
+    """
+    Takes in a tensor of logits of dimension (batch, length, vocab).
+    Computes the log-likelihoods using a softmax along the vocab dimension.
+    Uses the `input_ids` to index into the log-likelihoods and returns the likelihood
+    of the provided sequence at each position with dimension (batch, length).
+    """
+    softmax_logprobs = torch.log_softmax(logits, dim=-1)
+    softmax_logprobs = softmax_logprobs[:, :-1]
+    input_ids = input_ids[:, 1:]
+    assert softmax_logprobs.shape[1] == input_ids.shape[1]
+
+    logprobs = torch.gather(
+        softmax_logprobs,  # Gather likelihoods...
+        2,  # along the vocab dimension...
+        input_ids.unsqueeze(-1),  # using the token ids to index.
+    ).squeeze(-1)
+
+    return logprobs
+
+
+def _clm_seq_logprob(
+    logits: Float[Tensor, "B L V"],
+    input_ids: Int[Tensor, "B L"],
+) -> Float[Tensor, " B"]:
+    # token-level log-probability
+    log_probs = _logits_to_logprobs(logits, input_ids)
+    # seq-level log-probability
+    return reduce(log_probs.float(), "B L -> B", "sum")

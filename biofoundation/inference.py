@@ -5,9 +5,15 @@ from transformers import Trainer, TrainingArguments, PreTrainedTokenizerBase
 from typing import Any, Callable
 from functools import partial
 
-from .model import LanguageModel
-from .data import transform_reflogprob_mlm
-from .model import compute_reflogprob_mlm
+from .data import (
+    transform_reflogprob_mlm,
+    transform_reflogprob_clm,
+)
+from .model import (
+    LanguageModel,
+    compute_reflogprob_mlm,
+    compute_reflogprob_clm,
+)
 
 
 def run_inference(
@@ -38,6 +44,12 @@ run_reflogprob_mlm = partial(
     run_inference,
     compute_fn=compute_reflogprob_mlm,
     data_transform_fn=transform_reflogprob_mlm,
+)
+
+run_reflogprob_clm = partial(
+    run_inference,
+    compute_fn=compute_reflogprob_clm,
+    data_transform_fn=transform_reflogprob_clm,
 )
 
 

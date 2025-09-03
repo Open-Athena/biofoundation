@@ -1,15 +1,15 @@
 from biofoundation.model import HFLanguageModel
-from biofoundation.inference import run_reflogprob_mlm
+from biofoundation.inference import run_reflogprob_clm
 from datasets import load_dataset
 import numpy as np
 from sklearn.metrics import roc_auc_score
-from transformers import AutoTokenizer, AutoModelForMaskedLM
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
 
-model_name = "kuleshov-group/PlantCaduceus_l20"
-tokenizer = AutoTokenizer.from_pretrained(model_name)
+model_name = "LongSafari/hyenadna-tiny-1k-seqlen-hf"
+tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 model = HFLanguageModel(
-    AutoModelForMaskedLM.from_pretrained(model_name, trust_remote_code=True)
+    AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True)
 )
 
 dataset = load_dataset(
@@ -19,7 +19,7 @@ dataset = load_dataset(
 )
 label = np.array(dataset["label"])
 
-pred = run_reflogprob_mlm(
+pred = run_reflogprob_clm(
     model,
     tokenizer,
     dataset,
