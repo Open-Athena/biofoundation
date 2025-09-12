@@ -1,4 +1,4 @@
-from biofoundation.model import HFLanguageModel
+from biofoundation.model import HFCausalLM
 from biofoundation.inference import run_reflogprob_clm
 from datasets import load_dataset
 import numpy as np
@@ -8,7 +8,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 
 model_name = "LongSafari/hyenadna-tiny-1k-seqlen-hf"
 tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-model = HFLanguageModel(
+model = HFCausalLM(
     AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True)
 )
 
@@ -25,13 +25,13 @@ pred = run_reflogprob_clm(
     dataset,
     data_transform_kwargs=dict(
         remove_columns=dataset.column_names,
-        num_proc=8,
+        num_proc=4,
     ),
     inference_kwargs=dict(
-        per_device_eval_batch_size=256,
+        per_device_eval_batch_size=32,
         torch_compile=False,
         bf16_full_eval=True,
-        dataloader_num_workers=8,
+        dataloader_num_workers=4,
         remove_unused_columns=False,
     ),
 )

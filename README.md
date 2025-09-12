@@ -13,6 +13,9 @@ uv venv
 source .venv/bin/activate
 ```
 
+Pre-requisites:
+- Pytorch (e.g. `uv pip install torch`)
+
 Install the package:
 
 ```bash
@@ -32,7 +35,7 @@ Run the example script:
 
 ```bash
 source .venv/bin/activate
-python examples/plantcad_evolutionary_constraint.py
+python examples/marin_evolutionary_constraint.py
 ```
 
 ## Development Setup
@@ -42,9 +45,6 @@ To set up the development environment with linting, formatting, type checking, a
 ```bash
 # Install development dependencies
 uv pip install --group dev
-
-# Install both main package and dev tools
-uv pip install -e . --group dev
 ```
 
 ## Development Tools
@@ -53,7 +53,7 @@ uv pip install -e . --group dev
 
 ```bash
 # Run all pre-commit hooks (linting, formatting, type checking)
-pre-commit run --all-files
+pre-commit run
 ```
 
 ### Running Tests

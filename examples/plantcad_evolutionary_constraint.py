@@ -1,4 +1,4 @@
-from biofoundation.model import HFLanguageModel
+from biofoundation.model import HFMaskedLM
 from biofoundation.inference import run_reflogprob_mlm
 from datasets import load_dataset
 import numpy as np
@@ -8,7 +8,7 @@ from transformers import AutoTokenizer, AutoModelForMaskedLM
 
 model_name = "kuleshov-group/PlantCaduceus_l20"
 tokenizer = AutoTokenizer.from_pretrained(model_name)
-model = HFLanguageModel(
+model = HFMaskedLM(
     AutoModelForMaskedLM.from_pretrained(model_name, trust_remote_code=True)
 )
 
@@ -25,13 +25,13 @@ pred = run_reflogprob_mlm(
     dataset,
     data_transform_kwargs=dict(
         remove_columns=dataset.column_names,
-        num_proc=8,
+        num_proc=4,
     ),
     inference_kwargs=dict(
-        per_device_eval_batch_size=256,
+        per_device_eval_batch_size=32,
         torch_compile=False,
         bf16_full_eval=True,
-        dataloader_num_workers=8,
+        dataloader_num_workers=4,
         remove_unused_columns=False,
     ),
 )

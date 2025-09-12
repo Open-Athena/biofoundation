@@ -10,14 +10,13 @@ from .data import (
     transform_reflogprob_clm,
 )
 from .model import (
-    LanguageModel,
     compute_reflogprob_mlm,
     compute_reflogprob_clm,
 )
 
 
 def run_inference(
-    model: LanguageModel,
+    model: nn.Module,
     tokenizer: PreTrainedTokenizerBase,  # TODO: create an adapter for this
     dataset: datasets.Dataset,
     compute_fn: Callable[..., Any],
@@ -84,7 +83,7 @@ def _run_inference(
 
 
 class _ModelComputeFnWrapper(nn.Module):
-    def __init__(self, model: LanguageModel, compute_fn: Callable[..., Any]):
+    def __init__(self, model: nn.Module, compute_fn: Callable[..., Any]):
         super().__init__()
         self.model = model
         self.compute_fn = compute_fn

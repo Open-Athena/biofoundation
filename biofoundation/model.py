@@ -9,7 +9,7 @@ from typing import cast
 from einops import rearrange, reduce
 
 
-class LanguageModel(ABC, nn.Module):
+class CausalLM(nn.Module, ABC):
     @abstractmethod
     def forward(
         self,
@@ -18,8 +18,28 @@ class LanguageModel(ABC, nn.Module):
         pass
 
 
-class HFLanguageModel(LanguageModel):
+class MaskedLM(nn.Module, ABC):
+    @abstractmethod
+    def forward(
+        self,
+        input_ids: Int[Tensor, "B L"],
+    ) -> Float[Tensor, "B L V"]:
+        pass
+
+
+class HFMaskedLM(MaskedLM):
     def __init__(self, model: PreTrainedModel):
+        assert model.__class__.__name__.endswith("MaskedLM")
+        super().__init__()
+        self.model = model
+
+    def forward(self, input_ids: Int[Tensor, "B L"]) -> Float[Tensor, "B L V"]:
+        return cast(Float[Tensor, "B L V"], self.model(input_ids).logits)
+
+
+class HFCausalLM(CausalLM):
+    def __init__(self, model: PreTrainedModel):
+        assert model.__class__.__name__.endswith("CausalLM")
         super().__init__()
         self.model = model
 
@@ -28,7 +48,7 @@ class HFLanguageModel(LanguageModel):
 
 
 def compute_reflogprob_mlm(
-    model: LanguageModel,
+    model: MaskedLM,
     input_ids: Int[Tensor, "B L"],
     pos: Int[Tensor, " B"],
     ref: Int[Tensor, " B"],
@@ -64,7 +84,7 @@ def compute_reflogprob_mlm(
 
 
 def compute_reflogprob_clm(
-    model: LanguageModel,
+    model: CausalLM,
     input_ids: Int[Tensor, "B 4 L"],
     ref: Int[Tensor, " B"],
 ) -> Float[Tensor, " B"]:
@@ -84,12 +104,12 @@ def compute_reflogprob_clm(
 def _logits_to_logprobs(
     logits: Float[Tensor, "B L V"],
     input_ids: Int[Tensor, "B L"],
-) -> Float[Tensor, "B L"]:  # technically L-1
+) -> Float[Tensor, "B L-1"]:
     """
     Takes in a tensor of logits of dimension (batch, length, vocab).
     Computes the log-likelihoods using a softmax along the vocab dimension.
     Uses the `input_ids` to index into the log-likelihoods and returns the likelihood
-    of the provided sequence at each position with dimension (batch, length).
+    of the provided sequence at each position with dimension (batch, length-1).
     """
     softmax_logprobs = torch.log_softmax(logits, dim=-1)
     softmax_logprobs = softmax_logprobs[:, :-1]
