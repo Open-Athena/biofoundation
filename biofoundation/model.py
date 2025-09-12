@@ -1,60 +1,135 @@
+from abc import ABC, abstractmethod
+from jaxtyping import Float, Int
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from jaxtyping import Float, Int
+from transformers import PreTrainedModel
+from typing import cast
+from einops import rearrange, reduce
 
 
-class RefLogProbMLM(nn.Module):
-    """Reference Log Probability Masked Language Model wrapper.
+class CausalLM(nn.Module, ABC):
+    @abstractmethod
+    def forward(
+        self,
+        input_ids: Int[Tensor, "B L"],
+    ) -> Float[Tensor, "B L V"]:
+        pass
 
-    This class wraps a pre-trained language model to compute reference log probabilities
-    for masked language modeling tasks. It takes a sequence with a masked position
-    and returns the log probability of the reference token at that position.
 
-    The model expects input tensors with specific shapes:
-    - input_ids_BL: Batch of token ID sequences [batch_size, sequence_length]
-    - pos_B: Positions to evaluate for each sequence in the batch
-    - ref_B: Reference token IDs to compute log probabilities for
+class MaskedLM(nn.Module, ABC):
+    @abstractmethod
+    def forward(
+        self,
+        input_ids: Int[Tensor, "B L"],
+    ) -> Float[Tensor, "B L V"]:
+        pass
 
-    Attributes:
-        model: The underlying language model that provides logits
-    """
 
-    def __init__(self, model: nn.Module):
+class HFMaskedLM(MaskedLM):
+    def __init__(self, model: PreTrainedModel):
+        assert model.__class__.__name__.endswith("MaskedLM")
         super().__init__()
         self.model = model
 
-    def forward(
-        self,
-        input_ids_BL: Int[Tensor, "B L"],
-        pos_B: Int[Tensor, " B"],
-        ref_B: Int[Tensor, " B"],
-    ) -> Float[Tensor, " B"]:
-        """Forward pass to compute reference log probabilities.
+    def forward(self, input_ids: Int[Tensor, "B L"]) -> Float[Tensor, "B L V"]:
+        return cast(Float[Tensor, "B L V"], self.model(input_ids).logits)
 
-        This method:
-        1. Runs the input through the language model to get logits
-        2. Extracts logits at the specified positions
-        3. Computes log probabilities using softmax
-        4. Returns the log probability of the reference tokens
 
-        Args:
-            input_ids_BL: Batch of token ID sequences with shape [B, L] where
-                B is batch size and L is sequence length
-            pos_B: Positions to evaluate for each sequence in the batch with
-                shape [B] where each element is the position index
-            ref_B: Reference token IDs to compute log probabilities for with
-                shape [B] where each element is the token ID
+class HFCausalLM(CausalLM):
+    def __init__(self, model: PreTrainedModel):
+        assert model.__class__.__name__.endswith("CausalLM")
+        super().__init__()
+        self.model = model
 
-        Returns:
-            Log probabilities of the reference tokens at the specified positions
-            with shape [B] where B is the batch size
-        """
-        B, L = input_ids_BL.shape
-        batch_indices_B = torch.arange(B)
-        logits_BLV = self.model(input_ids_BL).logits
-        logits_BV = logits_BLV[batch_indices_B, pos_B]
-        logprobs_BV = F.log_softmax(logits_BV, dim=-1)
-        res_B = logprobs_BV[batch_indices_B, ref_B]
-        return res_B
+    def forward(self, input_ids: Int[Tensor, "B L"]) -> Float[Tensor, "B L V"]:
+        return cast(Float[Tensor, "B L V"], self.model(input_ids).logits)
+
+
+def compute_reflogprob_mlm(
+    model: MaskedLM,
+    input_ids: Int[Tensor, "B L"],
+    pos: Int[Tensor, " B"],
+    ref: Int[Tensor, " B"],
+) -> Float[Tensor, " B"]:
+    """Forward pass to compute reference log probabilities.
+
+    This method:
+    1. Runs the input through the language model to get logits
+    2. Extracts logits at the specified positions
+    3. Computes log probabilities using softmax
+    4. Returns the log probability of the reference tokens
+
+    Args:
+        model: Language model to use for inference
+        input_ids: Batch of token ID sequences with shape [B, L] where
+            B is batch size and L is sequence length
+        pos: Positions to evaluate for each sequence in the batch with
+            shape [B] where each element is the position index
+        ref: Reference token IDs to compute log probabilities for with
+            shape [B] where each element is the token ID
+
+    Returns:
+        Log probabilities of the reference tokens at the specified positions
+        with shape [B] where B is the batch size
+    """
+    B, _ = input_ids.shape
+    batch_indices = torch.arange(B)
+    logits = model(input_ids)
+    logits = logits[batch_indices, pos]
+    logprobs = F.log_softmax(logits, dim=-1)
+    res = logprobs[batch_indices, ref]
+    return res
+
+
+def compute_reflogprob_clm(
+    model: CausalLM,
+    input_ids: Int[Tensor, "B 4 L"],
+    ref: Int[Tensor, " B"],
+) -> Float[Tensor, " B"]:
+    B = input_ids.shape[0]
+    batch_indices = torch.arange(B)
+    input_ids = rearrange(input_ids, "B V L -> (B V) L")
+    logits = model(input_ids)
+    log_prob = _clm_seq_logprob(logits, input_ids)
+    log_prob = rearrange(log_prob, "(B V) -> B V", B=B)
+    # marginal log-probability of each of the 4 alleles
+    marginal_log_prob = torch.log_softmax(log_prob, dim=-1)
+    ref_log_prob = marginal_log_prob[batch_indices, ref]
+    return ref_log_prob
+
+
+# https://github.com/ArcInstitute/evo2/blob/4c3c8522dc99d2dc14b5b5a07cd65f2b67e6f457/evo2/scoring.py#L37
+def _logits_to_logprobs(
+    logits: Float[Tensor, "B L V"],
+    input_ids: Int[Tensor, "B L"],
+) -> Float[Tensor, "B L-1"]:
+    """
+    Takes in a tensor of logits of dimension (batch, length, vocab).
+    Computes the log-likelihoods using a softmax along the vocab dimension.
+    Uses the `input_ids` to index into the log-likelihoods and returns the likelihood
+    of the provided sequence at each position with dimension (batch, length-1).
+    """
+    softmax_logprobs = torch.log_softmax(logits, dim=-1)
+    softmax_logprobs = softmax_logprobs[:, :-1]
+    input_ids = input_ids[:, 1:]
+    assert softmax_logprobs.shape[1] == input_ids.shape[1]
+
+    logprobs = torch.gather(
+        softmax_logprobs,  # Gather likelihoods...
+        2,  # along the vocab dimension...
+        input_ids.unsqueeze(-1),  # using the token ids to index.
+    ).squeeze(-1)
+
+    return logprobs
+
+
+def _clm_seq_logprob(
+    logits: Float[Tensor, "B L V"],
+    input_ids: Int[Tensor, "B L"],
+) -> Float[Tensor, " B"]:
+    # token-level log-probability
+    log_probs = _logits_to_logprobs(logits, input_ids)
+    # seq-level log-probability
+    return reduce(log_probs.float(), "B L -> B", "sum")
