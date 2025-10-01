@@ -1,6 +1,6 @@
 import gzip
 from pathlib import Path
-from typing import Any, Collection, Literal
+from typing import Any, Literal, cast
 
 import pandas as pd
 from Bio import SeqIO
@@ -66,13 +66,13 @@ def transform_reflogprob_clm(
 
 def read_fasta(
     path: str | Path,
-    subset_chroms: Collection[str] | None = None,
+    subset_chroms: set[str] | None = None,
 ) -> pd.Series:
     with gzip.open(path, "rt") if str(path).endswith(".gz") else open(path) as handle:
         genome = pd.Series(
             {
                 rec.id: str(rec.seq)
-                for rec in SeqIO.parse(handle, "fasta")
+                for rec in SeqIO.parse(handle, "fasta")  # type: ignore[no-untyped-call]
                 if subset_chroms is None or rec.id in subset_chroms
             }
         )
@@ -83,7 +83,7 @@ class Genome:
     def __init__(
         self,
         path: str | Path,
-        subset_chroms: Collection[str] | None = None,
+        subset_chroms: set[str] | None = None,
     ):
         self._genome: pd.Series = read_fasta(path, subset_chroms=subset_chroms)
         self._chrom_sizes: dict[str, int] = {
@@ -114,13 +114,9 @@ class Genome:
         if strand not in {"+", "-"}:
             raise ValueError("strand must be '+' or '-'")
         if start > end:
-            raise ValueError(
-                f"start {start} must be less than or equal to end {end}"
-            )
+            raise ValueError(f"start {start} must be less than or equal to end {end}")
         if end < 0:
-            raise ValueError(
-                f"end {end} must be non-negative for chromosome {chrom}"
-            )
+            raise ValueError(f"end {end} must be non-negative for chromosome {chrom}")
         if start >= chrom_size:
             raise ValueError(f"start {start} is out of range for chromosome {chrom}")
 
@@ -132,5 +128,5 @@ class Genome:
             seq = seq + "N" * (end - chrom_size)  # right padding
 
         if strand == "-":
-            seq = str(Seq(seq).reverse_complement())
-        return seq
+            seq = str(Seq(seq).reverse_complement())  # type: ignore[no-untyped-call]
+        return cast(str, seq)
