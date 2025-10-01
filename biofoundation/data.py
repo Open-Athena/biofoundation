@@ -38,8 +38,8 @@ def transform_llr_mlm(
     return dict(
         input_ids=input_ids,
         pos=pos,
-        ref=tokenizer(example["ref"])[0],
-        alt=tokenizer(example["alt"])[0],
+        ref=tokenizer(example["ref"])["input_ids"][0],
+        alt=tokenizer(example["alt"])["input_ids"][0],
     )
 
 
