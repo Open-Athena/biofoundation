@@ -47,6 +47,22 @@ class HFCausalLM(CausalLM):
         return cast(Float[Tensor, "B L V"], self.model(input_ids).logits)
 
 
+def compute_llr_mlm(
+    model: MaskedLM,
+    input_ids: Int[Tensor, "B L"],
+    pos: Int[Tensor, " B"],
+    ref: Int[Tensor, " B"],
+    alt: Int[Tensor, " B"],
+) -> Float[Tensor, " B"]:
+    B, _ = input_ids.shape
+    batch_indices = torch.arange(B)
+    logits = model(input_ids)
+    logits_pos = logits[batch_indices, pos]
+    logits_ref = logits_pos[batch_indices, ref]
+    logits_alt = logits_pos[batch_indices, alt]
+    return cast(Float[Tensor, " B"], logits_alt - logits_ref)
+
+
 def compute_reflogprob_mlm(
     model: MaskedLM,
     input_ids: Int[Tensor, "B L"],

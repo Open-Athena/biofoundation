@@ -11,6 +11,38 @@ from transformers import PreTrainedTokenizerBase
 NUCLEOTIDES = list("ACGT")
 
 
+def transform_llr_mlm(
+    example: dict[str, Any],
+    tokenizer: PreTrainedTokenizerBase,
+    genome: "Genome",
+    window_size: int,
+) -> dict[str, Any]:
+    """Prepare an example for masked language modeling log likelihood ratio scoring.
+
+    The input dictionary follows VCF semantics where `pos` is a 1-based
+    coordinate and `ref`/`alt` are single nucleotides. The function extracts a
+    centered window from the provided genome, masks the reference position, and
+    returns tokenized tensors along with the reference and alternate token
+    encodings.
+    """
+    center_index = example["pos"] - 1  # 1-based to 0-based
+    assert window_size % 2 == 0, "window_size must be even"
+    start = center_index - window_size // 2
+    end = center_index + window_size // 2
+    seq = genome(example["chrom"], start, end).upper()
+    assert len(seq) == window_size
+    pos = window_size // 2
+    assert seq[pos] == example["ref"]
+    input_ids = tokenizer(seq, return_tensors="pt")["input_ids"][0]
+    input_ids[pos] = tokenizer.mask_token_id
+    return dict(
+        input_ids=input_ids,
+        pos=pos,
+        ref=tokenizer(example["ref"])["input_ids"][0],
+        alt=tokenizer(example["alt"])["input_ids"][0],
+    )
+
+
 def transform_reflogprob_mlm(
     example: dict[str, Any],
     tokenizer: PreTrainedTokenizerBase,

@@ -6,12 +6,15 @@ from typing import Any, Callable
 from functools import partial
 
 from .data import (
+    Genome,
     transform_reflogprob_mlm,
     transform_reflogprob_clm,
+    transform_llr_mlm,
 )
 from .model import (
     compute_reflogprob_mlm,
     compute_reflogprob_clm,
+    compute_llr_mlm,
 )
 
 
@@ -50,6 +53,26 @@ run_reflogprob_clm = partial(
     compute_fn=compute_reflogprob_clm,
     data_transform_fn=transform_reflogprob_clm,
 )
+
+
+def run_llr_mlm(
+    model: nn.Module,
+    tokenizer: PreTrainedTokenizerBase,
+    dataset: datasets.Dataset,
+    genome: Genome,
+    window_size: int,
+    **kwargs: Any,
+) -> Any:
+    return run_inference(
+        model,
+        tokenizer,
+        dataset,
+        compute_fn=compute_llr_mlm,
+        data_transform_fn=partial(
+            transform_llr_mlm, genome=genome, window_size=window_size
+        ),
+        **kwargs,
+    )
 
 
 def _run_inference(
