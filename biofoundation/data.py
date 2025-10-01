@@ -1,5 +1,11 @@
+import gzip
+from pathlib import Path
+from typing import Any, Collection, Literal
+
+import pandas as pd
+from Bio import SeqIO
+from Bio.Seq import Seq
 from transformers import PreTrainedTokenizerBase
-from typing import Any
 
 
 NUCLEOTIDES = list("ACGT")
@@ -56,3 +62,75 @@ def transform_reflogprob_clm(
         new_input_ids[i, pos] = tokenizer.encode(nuc)[0]
     ref = NUCLEOTIDES.index(example["seq"][pos])
     return dict(input_ids=new_input_ids, ref=ref)
+
+
+def read_fasta(
+    path: str | Path,
+    subset_chroms: Collection[str] | None = None,
+) -> pd.Series:
+    with gzip.open(path, "rt") if str(path).endswith(".gz") else open(path) as handle:
+        genome = pd.Series(
+            {
+                rec.id: str(rec.seq)
+                for rec in SeqIO.parse(handle, "fasta")
+                if subset_chroms is None or rec.id in subset_chroms
+            }
+        )
+    return genome
+
+
+class Genome:
+    def __init__(
+        self,
+        path: str | Path,
+        subset_chroms: Collection[str] | None = None,
+    ):
+        self._genome: pd.Series = read_fasta(path, subset_chroms=subset_chroms)
+        self._chrom_sizes: dict[str, int] = {
+            chrom: len(seq) for chrom, seq in self._genome.items()
+        }
+
+    def __call__(
+        self,
+        chrom: str,
+        start: int,
+        end: int,
+        strand: Literal["+", "-"] = "+",
+    ) -> str:
+        """Get a subsequence of a chromosome.
+        If start is negative, the sequence is padded with Ns on the left.
+        If end is greater than the chromosome size, the sequence is padded with Ns on
+        the right.
+
+        Args:
+            chrom: The chromosome to get the sequence of.
+            start: The start position of the sequence (0-based, inclusive).
+            end: The end position of the sequence (0-based, exclusive).
+            strand: The strand of the sequence (+ or -).
+        """
+        if chrom not in self._genome:
+            raise ValueError(f"chromosome {chrom} not found in genome")
+        chrom_size = self._chrom_sizes[chrom]
+        if strand not in {"+", "-"}:
+            raise ValueError("strand must be '+' or '-'")
+        if start > end:
+            raise ValueError(
+                f"start {start} must be less than or equal to end {end}"
+            )
+        if end < 0:
+            raise ValueError(
+                f"end {end} must be non-negative for chromosome {chrom}"
+            )
+        if start >= chrom_size:
+            raise ValueError(f"start {start} is out of range for chromosome {chrom}")
+
+        seq = self._genome[chrom][max(start, 0) : min(end, chrom_size)]
+
+        if start < 0:
+            seq = "N" * (-start) + seq  # left padding
+        if end > chrom_size:
+            seq = seq + "N" * (end - chrom_size)  # right padding
+
+        if strand == "-":
+            seq = str(Seq(seq).reverse_complement())
+        return seq
