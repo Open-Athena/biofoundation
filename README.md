@@ -45,6 +45,8 @@ To set up the development environment with linting, formatting, type checking, a
 ```bash
 # Install development dependencies
 uv pip install --group dev
+# Install pre-commit hooks
+pre-commit install
 ```
 
 ## Development Tools
