@@ -20,7 +20,7 @@ dataset = load_dataset(
     "plantcad/maize-allele-frequency",
     split="test",
 )
-dataset = dataset.select(range(100))
+dataset = dataset.select(range(10))
 
 pred = run_llr_mlm(
     model,
@@ -28,10 +28,7 @@ pred = run_llr_mlm(
     dataset,
     genome,
     window_size,
-    data_transform_kwargs=dict(
-        remove_columns=dataset.column_names,
-        num_proc=4,
-    ),
+    data_transform_on_the_fly=True,
     inference_kwargs=dict(
         per_device_eval_batch_size=32,
         torch_compile=False,

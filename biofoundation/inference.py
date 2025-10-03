@@ -124,6 +124,8 @@ def _process_dataset(
 ) -> datasets.Dataset:
     if data_transform_fn is None:
         return dataset
+    if data_transform_kwargs is None:
+        data_transform_kwargs = {}
     data_transform_fn = partial(data_transform_fn, tokenizer=tokenizer)
     if data_transform_on_the_fly:
         return dataset.with_transform(
