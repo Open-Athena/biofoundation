@@ -2,9 +2,12 @@ from biofoundation.data import Genome
 from biofoundation.model import HFMaskedLM
 from biofoundation.inference import run_llr_mlm
 from datasets import load_dataset
+import numpy as np
+from scipy.stats import pearsonr, spearmanr
 from transformers import AutoTokenizer, AutoModelForMaskedLM
 
 
+# model_name = "kuleshov-group/PlantCaduceus_l20" # 0.140, 0.108
 model_name = "kuleshov-group/PlantCaduceus_l32"
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = HFMaskedLM(
@@ -20,9 +23,9 @@ dataset = load_dataset(
     "plantcad/maize-allele-frequency",
     split="test",
 )
-dataset = dataset.select(range(10))
+AF = np.array(dataset["AF"])
 
-pred = run_llr_mlm(
+llr = run_llr_mlm(
     model,
     tokenizer,
     dataset,
@@ -30,11 +33,12 @@ pred = run_llr_mlm(
     window_size,
     data_transform_on_the_fly=True,
     inference_kwargs=dict(
-        per_device_eval_batch_size=32,
+        per_device_eval_batch_size=64,
         torch_compile=False,
         bf16_full_eval=True,
         dataloader_num_workers=4,
         remove_unused_columns=False,
     ),
 )
-print(pred)
+print(f"{pearsonr(AF, llr)=}")  # TODO: print stat rounded to 3 decimal places
+print(f"{spearmanr(AF, llr)=}")
