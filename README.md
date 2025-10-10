@@ -31,11 +31,14 @@ uv pip install -e .[mamba]
 
 ## Usage
 
-Run the example script:
+Run the example scripts:
 
 ```bash
 source .venv/bin/activate
+# light job
 python examples/marin_evolutionary_constraint.py
+# heavier job, split across 8 GPUs with 8 CPU threads per GPU
+OMP_NUM_THREADS=8 torchrun --nproc_per_node=8 examples/plantcad_llr.py
 ```
 
 ## Development Setup
