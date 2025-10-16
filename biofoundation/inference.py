@@ -10,11 +10,13 @@ from .data import (
     transform_reflogprob_mlm,
     transform_reflogprob_clm,
     transform_llr_mlm,
+    transform_llr_clm,
 )
 from .model import (
     compute_reflogprob_mlm,
     compute_reflogprob_clm,
     compute_llr_mlm,
+    compute_llr_clm,
 )
 
 
@@ -70,6 +72,26 @@ def run_llr_mlm(
         compute_fn=compute_llr_mlm,
         data_transform_fn=partial(
             transform_llr_mlm, genome=genome, window_size=window_size
+        ),
+        **kwargs,
+    )
+
+
+def run_llr_clm(
+    model: nn.Module,
+    tokenizer: PreTrainedTokenizerBase,
+    dataset: datasets.Dataset,
+    genome: Genome,
+    window_size: int,
+    **kwargs: Any,
+) -> Any:
+    return run_inference(
+        model,
+        tokenizer,
+        dataset,
+        compute_fn=compute_llr_clm,
+        data_transform_fn=partial(
+            transform_llr_clm, genome=genome, window_size=window_size
         ),
         **kwargs,
     )
