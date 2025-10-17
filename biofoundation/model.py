@@ -63,6 +63,38 @@ def compute_llr_mlm(
     return cast(Float[Tensor, " B"], logits_alt - logits_ref)
 
 
+def compute_llr_clm(
+    model: CausalLM,
+    input_ids: Int[Tensor, "B 2 L"],
+) -> Float[Tensor, " B"]:
+    """Compute log-likelihood ratio for causal language models.
+
+    Args:
+        model: Causal language model
+        input_ids: Input sequences with shape [B, 2, L] where the 2 sequences are [ref, alt]
+
+    Returns:
+        Log-likelihood ratio (alt_logprob - ref_logprob) with shape [B]
+    """
+    B = input_ids.shape[0]
+    # Reshape to process both sequences together: [B*2, L]
+    input_ids = rearrange(input_ids, "B V L -> (B V) L")
+
+    # Get logits from the model
+    logits = model(input_ids)
+
+    # Compute sequence-level log probabilities
+    log_prob = _clm_seq_logprob(logits, input_ids)
+
+    # Reshape back to [B, 2] where dim 1 is [ref_logprob, alt_logprob]
+    log_prob = rearrange(log_prob, "(B V) -> B V", B=B)
+
+    # Compute LLR as alt_logprob - ref_logprob
+    llr = log_prob[:, 1] - log_prob[:, 0]  # alt - ref
+
+    return llr
+
+
 def compute_reflogprob_mlm(
     model: MaskedLM,
     input_ids: Int[Tensor, "B L"],
