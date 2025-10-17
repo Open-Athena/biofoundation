@@ -19,7 +19,8 @@ import numpy as np  # noqa: E402
 from scipy.stats import pearsonr, spearmanr  # noqa: E402
 
 
-model_name = "evo2_1b_base"
+# model_name = "evo2_1b_base"
+model_name = "evo2_7b"
 _model = Evo2(model_name)
 model = Evo2CausalLM(_model)
 tokenizer = Evo2Tokenizer(_model.tokenizer)
@@ -43,9 +44,8 @@ llr = run_llr_clm(
     window_size,
     data_transform_on_the_fly=True,
     inference_kwargs=dict(
-        per_device_eval_batch_size=16,
-        # torch_compile=True,
-        # bf16_full_eval=True,
+        # per_device_eval_batch_size=16,  # evo2_1b_base
+        per_device_eval_batch_size=8,  # evo2_7b
         dataloader_num_workers=8,
         remove_unused_columns=False,
     ),
@@ -54,7 +54,9 @@ print(f"{llr.min()=} {llr.max()=} {llr.mean()=}")
 pearson = pearsonr(AF, llr)[0].round(3)
 spearman = spearmanr(AF, llr)[0].round(3)
 print(f"{pearson=} {spearman=}")
+print(f"{llr=}")
 
-# | Model                          | Window Size | Pearson | Spearman |
-# |--------------------------------|-------------|---------|----------|
-# | evo2_1b_base                   |   8192      | 0.093     | 0.081      |
+# | Model        | Window Size | Pearson | Spearman |
+# |--------------|-------------|---------|----------|
+# | evo2_1b_base |   8192      | 0.093   | 0.081    |
+# | evo2_7b      |   8192      | 0.100   | 0.085    |
