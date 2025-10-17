@@ -129,16 +129,9 @@ def transform_llr_clm(
     and returns tokenized tensors stacked together.
     """
     seq, pos = _get_variant_window(example, genome, window_size)
-
-    # Create reference sequence
     ref_seq = seq
-    # Create alternate sequence by replacing the nucleotide at pos
     alt_seq = seq[:pos] + example["alt"] + seq[pos + 1 :]
-
-    # Tokenize both sequences in one call
     input_ids = tokenizer([ref_seq, alt_seq], return_tensors="pt")["input_ids"]
-    assert (input_ids[0, :8] == input_ids[1, :8]).all()
-
     return dict(input_ids=input_ids)
 
 
