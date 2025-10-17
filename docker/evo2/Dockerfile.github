@@ -12,9 +12,8 @@ RUN apt-get update && apt-get install -y \
 # Install evo2 (handles complex dependencies)
 RUN pip install evo2
 
-# Install biofoundation from GitHub
-# Update with your actual repository URL
-RUN pip install git+https://github.com/YOUR_ORG/biofoundation.git@main
+# Install biofoundation from GitHub with legacy resolver
+RUN pip install git+https://github.com/Open-Athena/biofoundation.git@main --use-deprecated=legacy-resolver --break-system-packages
 
 # Verify installations
 RUN python -c "import biofoundation; print('✓ BioFoundation installed')"

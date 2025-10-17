@@ -15,7 +15,9 @@ RUN pip install evo2
 # Copy and install biofoundation from repository root
 COPY ../.. /workspace/biofoundation
 WORKDIR /workspace/biofoundation
-RUN pip install -e .
+
+# Install biofoundation with legacy resolver to handle constraints
+RUN pip install -e . --use-deprecated=legacy-resolver --break-system-packages
 
 # Verify installations
 RUN python -c "import biofoundation; print('✓ BioFoundation installed')"

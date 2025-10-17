@@ -26,4 +26,4 @@ class Evo2Tokenizer(Tokenizer):
         self._tokenizer = tokenizer
 
     def encode(self, text: str) -> list[int]:
-        return cast(list[int], self._tokenizer.tokenize(text))
+        return list(map(int, self._tokenizer.tokenize(text)))
