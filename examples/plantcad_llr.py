@@ -1,5 +1,5 @@
 from biofoundation.data import Genome
-from biofoundation.model.adapters.hf import HFMaskedLM
+from biofoundation.model.adapters.hf import HFMaskedLM, HFTokenizer
 from biofoundation.inference import run_llr_mlm
 from datasets import load_dataset
 import numpy as np
@@ -8,7 +8,7 @@ from transformers import AutoTokenizer, AutoModelForMaskedLM
 
 
 model_name = "kuleshov-group/PlantCAD2-Large-l48-d1536"
-tokenizer = AutoTokenizer.from_pretrained(model_name)
+tokenizer = HFTokenizer(AutoTokenizer.from_pretrained(model_name))
 model = HFMaskedLM(
     AutoModelForMaskedLM.from_pretrained(model_name, trust_remote_code=True)
 )

@@ -1,4 +1,4 @@
-from biofoundation.model.adapters.hf import HFCausalLM
+from biofoundation.model.adapters.hf import HFCausalLM, HFTokenizer
 from biofoundation.inference import run_reflogprob_clm
 from datasets import load_dataset
 import numpy as np
@@ -7,7 +7,9 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 
 
 model_name = "LongSafari/hyenadna-tiny-1k-seqlen-hf"
-tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+tokenizer = HFTokenizer(
+    AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+)
 model = HFCausalLM(
     AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True)
 )

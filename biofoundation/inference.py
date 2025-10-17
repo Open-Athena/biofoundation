@@ -1,9 +1,11 @@
 import datasets
 import tempfile
 import torch.nn as nn
-from transformers import Trainer, TrainingArguments, PreTrainedTokenizerBase
+from transformers import Trainer, TrainingArguments
 from typing import Any, Callable
 from functools import partial
+
+from .model.base import Tokenizer
 
 from .data import (
     Genome,
@@ -22,7 +24,7 @@ from .model.scoring import (
 
 def run_inference(
     model: nn.Module,
-    tokenizer: PreTrainedTokenizerBase,  # TODO: create an adapter for this
+    tokenizer: Tokenizer,
     dataset: datasets.Dataset,
     compute_fn: Callable[..., Any],
     data_transform_fn: Callable[..., dict[str, Any]] | None = None,
@@ -59,7 +61,7 @@ run_reflogprob_clm = partial(
 
 def run_llr_mlm(
     model: nn.Module,
-    tokenizer: PreTrainedTokenizerBase,
+    tokenizer: Tokenizer,
     dataset: datasets.Dataset,
     genome: Genome,
     window_size: int,
@@ -79,7 +81,7 @@ def run_llr_mlm(
 
 def run_llr_clm(
     model: nn.Module,
-    tokenizer: PreTrainedTokenizerBase,
+    tokenizer: Tokenizer,
     dataset: datasets.Dataset,
     genome: Genome,
     window_size: int,
@@ -139,7 +141,7 @@ class _ModelComputeFnWrapper(nn.Module):
 
 def _process_dataset(
     dataset: datasets.Dataset,
-    tokenizer: PreTrainedTokenizerBase,
+    tokenizer: Tokenizer,
     data_transform_fn: Callable[..., dict[str, Any]] | None = None,
     data_transform_on_the_fly: bool = False,
     data_transform_kwargs: dict[str, Any] | None = None,
