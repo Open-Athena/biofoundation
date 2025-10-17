@@ -3,9 +3,11 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 import pandas as pd
+import torch
 from Bio import SeqIO
 from Bio.Seq import Seq
-from transformers import PreTrainedTokenizerBase
+
+from .model.base import Tokenizer
 
 
 NUCLEOTIDES = list("ACGT")
@@ -92,7 +94,7 @@ def _get_variant_window(
 
 def transform_llr_mlm(
     example: dict[str, Any],
-    tokenizer: PreTrainedTokenizerBase,
+    tokenizer: Tokenizer,
     genome: Genome,
     window_size: int,
 ) -> dict[str, Any]:
@@ -105,19 +107,19 @@ def transform_llr_mlm(
     encodings.
     """
     seq, pos = _get_variant_window(example, genome, window_size)
-    input_ids = tokenizer(seq, return_tensors="pt")["input_ids"][0]
+    input_ids = torch.tensor(tokenizer.encode(seq))
     input_ids[pos] = tokenizer.mask_token_id
     return dict(
         input_ids=input_ids,
         pos=pos,
-        ref=tokenizer(example["ref"])["input_ids"][0],
-        alt=tokenizer(example["alt"])["input_ids"][0],
+        ref=tokenizer.encode(example["ref"])[0],
+        alt=tokenizer.encode(example["alt"])[0],
     )
 
 
 def transform_llr_clm(
     example: dict[str, Any],
-    tokenizer: PreTrainedTokenizerBase,
+    tokenizer: Tokenizer,
     genome: Genome,
     window_size: int,
 ) -> dict[str, Any]:
@@ -131,13 +133,18 @@ def transform_llr_clm(
     seq, pos = _get_variant_window(example, genome, window_size)
     ref_seq = seq
     alt_seq = seq[:pos] + example["alt"] + seq[pos + 1 :]
-    input_ids = tokenizer([ref_seq, alt_seq], return_tensors="pt")["input_ids"]
+    input_ids = torch.stack(
+        [
+            torch.tensor(tokenizer.encode(ref_seq)),
+            torch.tensor(tokenizer.encode(alt_seq)),
+        ]
+    )
     return dict(input_ids=input_ids)
 
 
 def transform_reflogprob_mlm(
     example: dict[str, Any],
-    tokenizer: PreTrainedTokenizerBase,
+    tokenizer: Tokenizer,
 ) -> dict[str, Any]:
     """Transform a sequence example for reference log probability MLM inference.
 
@@ -149,7 +156,7 @@ def transform_reflogprob_mlm(
     Args:
         example: Dictionary containing the sequence data. Must have a key matching
             `seq_col` that contains the input sequence.
-        tokenizer: HuggingFace tokenizer for converting text to token IDs.
+        tokenizer: Tokenizer for converting text to token IDs.
 
     Returns:
         Dictionary with three keys:
@@ -166,7 +173,7 @@ def transform_reflogprob_mlm(
     """
     pos = example["pos"]
     assert example["seq"][pos] in NUCLEOTIDES
-    input_ids = tokenizer(example["seq"], return_tensors="pt")["input_ids"][0]
+    input_ids = torch.tensor(tokenizer.encode(example["seq"]))
     ref = input_ids[pos].item()
     input_ids[pos] = tokenizer.mask_token_id
     return dict(input_ids=input_ids, pos=pos, ref=ref)
@@ -174,11 +181,11 @@ def transform_reflogprob_mlm(
 
 def transform_reflogprob_clm(
     example: dict[str, Any],
-    tokenizer: PreTrainedTokenizerBase,
+    tokenizer: Tokenizer,
 ) -> dict[str, Any]:
     pos = example["pos"]
     assert example["seq"][pos] in NUCLEOTIDES
-    input_ids = tokenizer(example["seq"], return_tensors="pt")["input_ids"][0]
+    input_ids = torch.tensor(tokenizer.encode(example["seq"]))
     ref = input_ids[pos].item()
     # Create 4 copies of the input sequence
     new_input_ids = input_ids.unsqueeze(0).repeat(len(NUCLEOTIDES), 1)

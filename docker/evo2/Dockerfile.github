@@ -1,0 +1,24 @@
+# Dockerfile for BioFoundation + Evo2 (GitHub install)
+# Uses NVIDIA's PyTorch image with all CUDA/cuDNN dependencies pre-installed
+
+FROM nvcr.io/nvidia/pytorch:25.04-py3
+
+RUN apt-get update && apt-get install -y \
+    git \
+    python3-pip \
+    python3-tomli \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install evo2 (handles complex dependencies)
+RUN pip install evo2
+
+# Install biofoundation from GitHub with legacy resolver
+RUN pip install git+https://github.com/Open-Athena/biofoundation.git@main --use-deprecated=legacy-resolver --break-system-packages
+
+# Verify installations
+RUN python -c "import biofoundation; print('✓ BioFoundation installed')"
+RUN python -c "from evo2 import Evo2; print('✓ Evo2 installed')"
+
+WORKDIR /workspace
+
+CMD ["bash"]

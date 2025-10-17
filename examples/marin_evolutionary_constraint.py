@@ -1,4 +1,4 @@
-from biofoundation.model import HFCausalLM
+from biofoundation.model.adapters.hf import HFCausalLM, HFTokenizer
 from biofoundation.inference import run_reflogprob_clm
 from datasets import load_dataset
 import numpy as np
@@ -6,7 +6,7 @@ from sklearn.metrics import roc_auc_score
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
 model_name = "plantcad/_dev_marin_plantcad_v1"
-tokenizer = AutoTokenizer.from_pretrained(model_name)
+tokenizer = HFTokenizer(AutoTokenizer.from_pretrained(model_name))
 model = HFCausalLM(AutoModelForCausalLM.from_pretrained(model_name))
 
 dataset = load_dataset(

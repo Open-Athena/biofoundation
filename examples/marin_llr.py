@@ -1,5 +1,5 @@
 from biofoundation.data import Genome
-from biofoundation.model import HFCausalLM
+from biofoundation.model.adapters.hf import HFCausalLM, HFTokenizer
 from biofoundation.inference import run_llr_clm
 from datasets import load_dataset
 import numpy as np
@@ -11,7 +11,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 # hf download plantcad/_dev_marin_plantcad1_v3_train --local-dir data/_dev_marin_plantcad1_v3_train --include local_store/checkpoints/plantcad-train-600m-r16-a1bc43/hf/step-26782/*
 
 model_name = "data/_dev_marin_plantcad1_v3_train/local_store/checkpoints/plantcad-train-600m-r16-a1bc43/hf/step-26782"
-tokenizer = AutoTokenizer.from_pretrained(model_name)
+tokenizer = HFTokenizer(AutoTokenizer.from_pretrained(model_name))
 model = HFCausalLM(AutoModelForCausalLM.from_pretrained(model_name))
 
 # Downloaded from https://ftp.ensemblgenomes.ebi.ac.uk/pub/plants/release-62/fasta/zea_mays/dna/Zea_mays.Zm-B73-REFERENCE-NAM-5.0.dna_sm.toplevel.fa.gz
