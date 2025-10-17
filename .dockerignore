@@ -1,0 +1,29 @@
+# Ignore docker directory to avoid package discovery conflicts
+docker/
+
+# Ignore other common files that shouldn't be in the container
+.git/
+.gitignore
+README.md
+docs/
+tests/
+examples/
+*.md
+.DS_Store
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/

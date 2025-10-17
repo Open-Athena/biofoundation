@@ -29,6 +29,19 @@ uv pip install -e .
 uv pip install -e .[mamba]
 ```
 
+### Docker Installation (For Evo2)
+
+For evo2 support, Docker is recommended as it handles all complex CUDA/cuDNN dependencies automatically.
+
+See [`docker/evo2/README.md`](docker/evo2/README.md) for detailed instructions.
+
+**Quick start:**
+
+```bash
+cd docker/evo2
+./run.sh local  # or ./run.sh github
+```
+
 ## Usage
 
 Run the example scripts:

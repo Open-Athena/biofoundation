@@ -1,0 +1,31 @@
+services:
+  # Local development version
+  local:
+    build:
+      context: ../..
+      dockerfile: docker/evo2/Dockerfile
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - ../..:/workspace/biofoundation
+      - ../../huggingface_cache:/root/.cache/huggingface
+      - ../../data:/workspace/data
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+
+  # GitHub install version
+  github:
+    build:
+      context: ../..
+      dockerfile: docker/evo2/Dockerfile.github
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - ../../huggingface_cache:/root/.cache/huggingface
+      - ../../data:/workspace/data
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
