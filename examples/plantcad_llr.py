@@ -1,5 +1,5 @@
 from biofoundation.data import Genome
-from biofoundation.model import HFMaskedLM
+from biofoundation.model.adapters.hf import HFMaskedLM
 from biofoundation.inference import run_llr_mlm
 from datasets import load_dataset
 import numpy as np

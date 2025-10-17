@@ -1,4 +1,4 @@
-from biofoundation.model import HFCausalLM
+from biofoundation.model.adapters.hf import HFCausalLM
 from biofoundation.inference import run_reflogprob_clm
 from datasets import load_dataset
 import numpy as np

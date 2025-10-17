@@ -12,7 +12,7 @@ from .data import (
     transform_llr_mlm,
     transform_llr_clm,
 )
-from .model import (
+from .model.scoring import (
     compute_reflogprob_mlm,
     compute_reflogprob_clm,
     compute_llr_mlm,
