@@ -1,6 +1,10 @@
 # Ignore docker directory to avoid package discovery conflicts
 docker/
 
+# Ignore data and cache directories
+data/
+huggingface_cache/
+
 # Ignore other common files that shouldn't be in the container
 .git/
 .gitignore
