@@ -177,20 +177,7 @@ def _clm_seq_logprob(
     logits: Float[Tensor, "B L V"],
     input_ids: Int[Tensor, "B L"],
 ) -> Float[Tensor, " B"]:
-    ref_pos = 0
-    alt_pos = 10
     # token-level log-probability
     log_probs = _logits_to_logprobs(logits, input_ids)
-    print(f"{logits.shape=} {input_ids.shape=} {log_probs.shape=}")
-    assert input_ids[ref_pos, :100] == input_ids[alt_pos, :100]
-    assert logits[ref_pos, :100] == logits[alt_pos, :100]
-    assert log_probs[ref_pos, :100] == log_probs[alt_pos, :100]
-    print(f"{logits[ref_pos]=}")
-    print(f"{logits[alt_pos]=}")
-    print(f"{input_ids[ref_pos]=}")
-    print(f"{input_ids[alt_pos]=}")
-    print(f"{log_probs[ref_pos]=}")
-    print(f"{log_probs[alt_pos]=}")
-    raise Exception("stop here")
     # seq-level log-probability
     return reduce(log_probs.float(), "B L -> B", "sum")

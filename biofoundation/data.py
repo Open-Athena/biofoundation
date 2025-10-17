@@ -137,6 +137,7 @@ def transform_llr_clm(
 
     # Tokenize both sequences in one call
     input_ids = tokenizer([ref_seq, alt_seq], return_tensors="pt")["input_ids"]
+    assert (input_ids[0, :8] == input_ids[1, :8]).all()
 
     return dict(input_ids=input_ids)
 
