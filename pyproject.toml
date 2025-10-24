@@ -5,7 +5,7 @@ description = "An ecosystem for users of biological foundation models"
 requires-python = ">=3.12"
 dependencies = [
     "biopython>=1.85",
-    "datasets>=4.2.0",
+    "datasets>=4.0.0",
     "einops",
     "jaxtyping",
     "numpy",
