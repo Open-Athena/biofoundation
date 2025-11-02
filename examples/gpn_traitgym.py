@@ -9,8 +9,9 @@ from sklearn.metrics import average_precision_score
 from transformers import AutoTokenizer, AutoModelForMaskedLM
 
 
-step = 60000
-model_name = f"data/gpn_checkpoints/checkpoint-{step}"
+#step = 60000
+#model_name = f"data/gpn_checkpoints/checkpoint-{step}"
+model_name = "songlab/gpn-animal-promoter"
 tokenizer = HFTokenizer(AutoTokenizer.from_pretrained(model_name))
 model = GPNMaskedLM(
     AutoModelForMaskedLM.from_pretrained(model_name)
@@ -54,3 +55,4 @@ print(f"{AUPRC=}")
 # | 30k    | 0.104 |
 # | 60k    | 0.111 |
 # | 70k    | 0.119 |
+# | gpn-animal-promoter | 0.397 |
