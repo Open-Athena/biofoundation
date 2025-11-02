@@ -25,8 +25,10 @@ uv pip install -e .
 ## Additional Dependencies
 
 ```bash
-# PlantCad1
+# PlantCaduceus
 uv pip install -e .[mamba]
+# GPN
+uv pip install -e .[gpn]
 ```
 
 ### Docker Installation (For Evo2)

@@ -24,6 +24,9 @@ mamba = [
   "causal-conv1d==1.5.0.post8",
   "mamba-ssm==2.2.4",
 ]
+gpn = [
+  "gpn @ git+https://github.com/songlab-cal/gpn",
+]
 
 [tool.uv.sources]
 torch = { index = "pytorch-cu128" }
@@ -55,6 +58,9 @@ dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
 ]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["biofoundation"]
