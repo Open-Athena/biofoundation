@@ -1284,3 +1284,392 @@ def test_genomic_set_valid_categorical_chrom():
     assert result_df.iloc[0]["chrom"] == "chr1"
     assert result_df.iloc[0]["start"] == 0
     assert result_df.iloc[0]["end"] == 50
+
+
+# expand_min_size and add_random_shift tests
+def test_genomic_set_expand_min_size_smaller_intervals():
+    """Test expand_min_size with intervals smaller than min_size.
+
+    Input: chr1:10-40 (size=30), min_size=50
+    Output: chr1:0-50 (expanded equally on both sides to reach min_size=50)
+
+    Note: Interval is expanded equally on both sides to reach min_size.
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1"],
+            "start": [10],
+            "end": [40],  # size = 30
+        }
+    )
+    gs = GenomicSet(data)
+    result = gs.expand_min_size(min_size=50)
+
+    # Should be expanded: pad = ceil((50-30)/2) = ceil(10) = 10
+    # So start = 10-10 = 0, end = 40+10 = 50
+    expected = GenomicSet(
+        pd.DataFrame(
+            {
+                "chrom": ["chr1"],
+                "start": [0],
+                "end": [50],
+            }
+        )
+    )
+    assert result == expected
+
+
+def test_genomic_set_expand_min_size_larger_intervals():
+    """Test expand_min_size with intervals already larger than min_size.
+
+    Input: chr1:0-100 (size=100), min_size=50
+    Output: chr1:0-100 (unchanged, already larger than min_size)
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1"],
+            "start": [0],
+            "end": [100],  # size = 100, already larger than min_size
+        }
+    )
+    gs = GenomicSet(data)
+    result = gs.expand_min_size(min_size=50)
+
+    # Should be unchanged (pad = max(ceil((50-100)/2), 0) = max(ceil(-25), 0) = 0)
+    expected = GenomicSet(
+        pd.DataFrame(
+            {
+                "chrom": ["chr1"],
+                "start": [0],
+                "end": [100],
+            }
+        )
+    )
+    assert result == expected
+
+
+def test_genomic_set_expand_min_size_causes_overlaps():
+    """Test expand_min_size causing overlaps that get merged.
+
+    Input: chr1:10-30, chr1:35-50 (separate, gap 30-35), min_size=30
+    Output: chr1:5-58 (expanded intervals overlap and merge)
+
+    Note: After expansion, intervals overlap and should be merged.
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1", "chr1"],
+            "start": [10, 35],
+            "end": [30, 50],  # sizes: 20, 15; gap between them
+        }
+    )
+    gs = GenomicSet(data)
+    result = gs.expand_min_size(min_size=30)
+
+    # First: size=20, pad = ceil((30-20)/2) = 5, becomes 5-35
+    # Second: size=15, pad = ceil((30-15)/2) = ceil(7.5) = 8, becomes 27-58
+    # Now they overlap (35 > 27), so should merge to chr1:5-58
+    expected = GenomicSet(
+        pd.DataFrame(
+            {
+                "chrom": ["chr1"],
+                "start": [5],
+                "end": [58],
+            }
+        )
+    )
+    assert result == expected
+
+
+def test_genomic_set_add_random_shift_different_seeds():
+    """Test add_random_shift with different seeds produces different results.
+
+    Input: chr1:50-100, seed=42 vs seed=123
+    Output: Different shifted positions for each seed
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1"],
+            "start": [50],
+            "end": [100],
+        }
+    )
+    gs = GenomicSet(data)
+
+    result1 = gs.add_random_shift(max_shift=10, seed=42)
+    result2 = gs.add_random_shift(max_shift=10, seed=123)
+
+    # Results should be different (different random shifts)
+    assert result1 != result2
+
+    # Both should have the same interval size (shift preserves size)
+    df1 = result1.to_pandas()
+    df2 = result2.to_pandas()
+    assert len(df1) == 1
+    assert len(df2) == 1
+    assert (df1.iloc[0]["end"] - df1.iloc[0]["start"]) == (
+        df2.iloc[0]["end"] - df2.iloc[0]["start"]
+    )
+    assert (df1.iloc[0]["end"] - df1.iloc[0]["start"]) == 50  # Original size preserved
+
+
+def test_genomic_set_add_random_shift_same_seed():
+    """Test add_random_shift with same seed produces same results.
+
+    Input: chr1:50-100, seed=42 (twice)
+    Output: Same shifted positions for both calls
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1"],
+            "start": [50],
+            "end": [100],
+        }
+    )
+    gs = GenomicSet(data)
+
+    result1 = gs.add_random_shift(max_shift=10, seed=42)
+    result2 = gs.add_random_shift(max_shift=10, seed=42)
+
+    # Results should be identical (same seed)
+    assert result1 == result2
+
+
+def test_genomic_set_add_random_shift_causes_overlaps():
+    """Test add_random_shift causing overlaps that get merged.
+
+    Input: chr1:50-60, chr1:61-70 (adjacent, separate), max_shift=5, seed=42
+    Output: Overlapping intervals after shift get merged
+
+    Note: Random shifts may cause intervals to overlap, which should be merged.
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1", "chr1"],
+            "start": [50, 61],
+            "end": [60, 70],  # Adjacent intervals
+        }
+    )
+    gs = GenomicSet(data)
+    result = gs.add_random_shift(max_shift=5, seed=42)
+
+    # With max_shift=5, intervals could shift and overlap
+    # The result should be a valid GenomicSet (merged if overlapping)
+    result_df = result.to_pandas()
+    assert len(result_df) >= 1  # May be 1 or 2 depending on shifts
+    assert all(result_df["chrom"] == "chr1")
+
+
+def test_genomic_set_add_random_shift_negative_start():
+    """Test add_random_shift with negative start values (should be allowed).
+
+    Input: chr1:5-15, max_shift=10, seed that causes negative shift
+    Output: chr1 with potentially negative start (allowed)
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1"],
+            "start": [5],
+            "end": [15],
+        }
+    )
+    gs = GenomicSet(data)
+    result = gs.add_random_shift(max_shift=10, seed=999)
+
+    # Should work even if start becomes negative
+    result_df = result.to_pandas()
+    assert len(result_df) == 1
+    assert result_df.iloc[0]["chrom"] == "chr1"
+    # Size should be preserved
+    assert (result_df.iloc[0]["end"] - result_df.iloc[0]["start"]) == 10
+
+
+def test_genomic_set_expand_min_size_returns_new_instance():
+    """Test that expand_min_size returns a new GenomicSet instance.
+
+    Input: chr1:10-40, expand_min_size(50)
+    Output: New GenomicSet, original unchanged
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1"],
+            "start": [10],
+            "end": [40],
+        }
+    )
+    gs = GenomicSet(data)
+    original_df = gs.to_pandas()
+
+    result = gs.expand_min_size(min_size=50)
+
+    # Original should be unchanged
+    assert gs.to_pandas().equals(original_df)
+    # Result should be different
+    assert result != gs
+    # Result should be a new GenomicSet
+    assert isinstance(result, GenomicSet)
+
+
+def test_genomic_set_add_random_shift_returns_new_instance():
+    """Test that add_random_shift returns a new GenomicSet instance.
+
+    Input: chr1:50-100, add_random_shift(10, 42)
+    Output: New GenomicSet, original unchanged
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1"],
+            "start": [50],
+            "end": [100],
+        }
+    )
+    gs = GenomicSet(data)
+    original_df = gs.to_pandas()
+
+    result = gs.add_random_shift(max_shift=10, seed=42)
+
+    # Original should be unchanged
+    assert gs.to_pandas().equals(original_df)
+    # Result should be different (unless shift happened to be 0)
+    # Result should be a new GenomicSet
+    assert isinstance(result, GenomicSet)
+
+
+# n_intervals and total_size tests
+def test_genomic_set_n_intervals_empty():
+    """Test n_intervals with empty set.
+
+    Input: (empty set)
+    Output: 0
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": [],
+            "start": [],
+            "end": [],
+        }
+    )
+    gs = GenomicSet(data)
+    assert gs.n_intervals() == 0
+
+
+def test_genomic_set_n_intervals_single():
+    """Test n_intervals with single interval.
+
+    Input: chr1:0-100
+    Output: 1
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1"],
+            "start": [0],
+            "end": [100],
+        }
+    )
+    gs = GenomicSet(data)
+    assert gs.n_intervals() == 1
+
+
+def test_genomic_set_n_intervals_multiple():
+    """Test n_intervals with multiple intervals.
+
+    Input: chr1:0-50, chr1:100-150, chr2:0-200
+    Output: 3
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1", "chr1", "chr2"],
+            "start": [0, 100, 0],
+            "end": [50, 150, 200],
+        }
+    )
+    gs = GenomicSet(data)
+    assert gs.n_intervals() == 3
+
+
+def test_genomic_set_n_intervals_after_merge():
+    """Test n_intervals after operations that merge intervals.
+
+    Input: chr1:0-50, chr1:40-60 (overlapping, merge to 1 interval)
+    Output: 1 (merged from 2)
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1", "chr1"],
+            "start": [0, 40],
+            "end": [50, 60],
+        }
+    )
+    gs = GenomicSet(data)
+    # Overlapping intervals should merge to 1
+    assert gs.n_intervals() == 1
+
+
+def test_genomic_set_total_size_empty():
+    """Test total_size with empty set.
+
+    Input: (empty set)
+    Output: 0
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": [],
+            "start": [],
+            "end": [],
+        }
+    )
+    gs = GenomicSet(data)
+    assert gs.total_size() == 0
+
+
+def test_genomic_set_total_size_single():
+    """Test total_size with single interval.
+
+    Input: chr1:0-100 (size=100)
+    Output: 100
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1"],
+            "start": [0],
+            "end": [100],
+        }
+    )
+    gs = GenomicSet(data)
+    assert gs.total_size() == 100
+
+
+def test_genomic_set_total_size_multiple():
+    """Test total_size with multiple intervals.
+
+    Input: chr1:0-50 (size=50), chr1:100-150 (size=50), chr2:0-200 (size=200)
+    Output: 300 (sum of all sizes)
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1", "chr1", "chr2"],
+            "start": [0, 100, 0],
+            "end": [50, 150, 200],
+        }
+    )
+    gs = GenomicSet(data)
+    assert gs.total_size() == 300
+
+
+def test_genomic_set_total_size_after_merge():
+    """Test total_size after operations that merge intervals.
+
+    Input: chr1:0-50 (size=50), chr1:40-60 (size=20, overlaps with first)
+    Output: 60 (merged to chr1:0-60, size=60, less than 50+20=70 due to overlap removal)
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1", "chr1"],
+            "start": [0, 40],
+            "end": [50, 60],
+        }
+    )
+    gs = GenomicSet(data)
+    # Overlapping intervals merge to chr1:0-60, size=60
+    # Original sizes were 50+20=70, but overlap reduces total to 60
+    assert gs.total_size() == 60

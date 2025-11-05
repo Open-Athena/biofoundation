@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 import bioframe as bf
+import numpy as np
 import pandas as pd
 import torch
 from Bio import SeqIO
@@ -174,6 +175,71 @@ class GenomicSet:
             start, and end coordinates.
         """
         return self._data
+
+    def n_intervals(self) -> int:
+        """Return the number of intervals in the GenomicSet.
+
+        Returns:
+            The number of non-overlapping intervals in the set.
+        """
+        return len(self._data)
+
+    def total_size(self) -> int:
+        """Return the total genomic basepairs covered by all intervals.
+
+        Returns:
+            The sum of all interval sizes (end - start) in base pairs.
+            Since intervals are non-overlapping, this represents the
+            actual genomic coverage.
+        """
+        return int((self._data["end"] - self._data["start"]).sum())
+
+    def expand_min_size(self, min_size: int) -> "GenomicSet":
+        """Expand intervals to at least the specified minimum size.
+
+        Each interval is expanded by padding equally on both sides until it
+        reaches at least `min_size`. Intervals that are already larger than
+        `min_size` are left unchanged.
+
+        Args:
+            min_size: Minimum size (in base pairs) for each interval.
+
+        Returns:
+            A new GenomicSet with expanded intervals. Overlapping intervals
+            resulting from expansion will be automatically merged.
+        """
+        res = self._data.copy()
+        res["size"] = res["end"] - res["start"]
+        res["pad"] = np.maximum(
+            np.ceil((min_size - res["size"]) / 2).astype(int),
+            0,
+        )
+        res["start"] = res["start"] - res["pad"]
+        res["end"] = res["end"] + res["pad"]
+        return GenomicSet(res.drop(columns=["size", "pad"]))
+
+    def add_random_shift(self, max_shift: int, seed: int | None = None) -> "GenomicSet":
+        """Add random shift to interval positions.
+
+        Each interval is shifted by a random amount (in base pairs) within
+        the range [-max_shift, max_shift] (inclusive). The same random shift is applied
+        to both start and end positions, preserving the interval size.
+
+        Args:
+            max_shift: Maximum absolute shift value in base pairs.
+            seed: Random seed for reproducible shifts. If None, shifts will be
+                non-reproducible (random each time).
+
+        Returns:
+            A new GenomicSet with shifted intervals. Overlapping intervals
+            resulting from shifts will be automatically merged.
+        """
+        rng = np.random.default_rng(seed)
+        shift = rng.integers(-max_shift, max_shift, len(self._data), endpoint=True)
+        res = self._data.copy()
+        res["start"] = res["start"] + shift
+        res["end"] = res["end"] + shift
+        return GenomicSet(res)
 
 
 def _get_variant_window(
