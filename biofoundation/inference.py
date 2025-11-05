@@ -5,16 +5,16 @@ from transformers import Trainer, TrainingArguments
 from typing import Any, Callable
 from functools import partial
 
-from .model.base import Tokenizer
+from biofoundation.model.base import Tokenizer
 
-from .data import (
+from biofoundation.data import (
     Genome,
     transform_reflogprob_mlm,
     transform_reflogprob_clm,
     transform_llr_mlm,
     transform_llr_clm,
 )
-from .model.scoring import (
+from biofoundation.model.scoring import (
     compute_reflogprob_mlm,
     compute_reflogprob_clm,
     compute_llr_mlm,
