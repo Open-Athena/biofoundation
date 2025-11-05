@@ -1,9 +1,9 @@
 from jaxtyping import Float, Int
 from torch import Tensor
 from typing import cast
-from transformers import PreTrainedModel, PreTrainedTokenizerBase
+from transformers import PreTrainedModel
 
-from ..base import CausalLM, MaskedLM, Tokenizer
+from biofoundation.model.base import MaskedLM
 
 
 class GPNMaskedLM(MaskedLM):

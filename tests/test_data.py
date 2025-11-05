@@ -1,11 +1,13 @@
 import textwrap
 
+import pandas as pd
 import pytest
 import torch
 from transformers import AutoTokenizer
 
 from biofoundation.data import (
     Genome,
+    GenomicSet,
     transform_llr_mlm,
     transform_llr_clm,
     transform_reflogprob_mlm,
@@ -450,3 +452,835 @@ def test_genome_respects_subset(tmp_path):
 
     with pytest.raises(ValueError, match="chromosome chr1 not found"):
         genome("chr1", start=0, end=4)
+
+
+# GenomicSet tests
+def test_genomic_set_initialization_non_overlapping():
+    """Test GenomicSet initialization with non-overlapping intervals.
+
+    Input: chr1:0-50, chr1:100-150, chr2:0-200
+    Output: chr1:0-50, chr1:100-150, chr2:0-200 (sorted, non-overlapping maintained)
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1", "chr1", "chr2"],
+            "start": [0, 100, 0],
+            "end": [50, 150, 200],
+        }
+    )
+    gs = GenomicSet(data)
+
+    # Should maintain the same intervals since they're non-overlapping, sorted
+    expected = GenomicSet(
+        pd.DataFrame(
+            {
+                "chrom": ["chr1", "chr1", "chr2"],
+                "start": [0, 100, 0],
+                "end": [50, 150, 200],
+            }
+        )
+    )
+    assert gs == expected
+
+
+def test_genomic_set_merges_overlapping_intervals():
+    """Test that GenomicSet merges overlapping intervals on initialization.
+
+    Input: chr1:0-50, chr1:40-60, chr1:90-150
+    Output: chr1:0-60, chr1:90-150 (overlapping intervals merged)
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1", "chr1", "chr1"],
+            "start": [0, 40, 90],
+            "end": [50, 60, 150],
+        }
+    )
+    gs = GenomicSet(data)
+
+    # Overlapping intervals [0,50] and [40,60] should merge to [0,60]
+    # [90,150] should remain separate
+    expected = GenomicSet(
+        pd.DataFrame(
+            {
+                "chrom": ["chr1", "chr1"],
+                "start": [0, 90],
+                "end": [60, 150],
+            }
+        )
+    )
+    assert gs == expected
+
+
+def test_genomic_set_merges_adjacent_intervals():
+    """Test that GenomicSet merges adjacent intervals on initialization.
+
+    Input: chr1:0-100, chr1:100-200 (adjacent: end of first equals start of second)
+    Output: chr1:0-200 (adjacent intervals merged into single interval)
+
+    Note: Adjacent intervals (where end of one equals start of the next) are merged
+    because they form a continuous region.
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1", "chr1"],
+            "start": [0, 100],
+            "end": [100, 200],
+        }
+    )
+    gs = GenomicSet(data)
+
+    expected = GenomicSet(
+        pd.DataFrame(
+            {
+                "chrom": ["chr1"],
+                "start": [0],
+                "end": [200],
+            }
+        )
+    )
+    assert gs == expected
+
+
+def test_genomic_set_union():
+    """Test union operation (|) between two GenomicSets.
+
+    Input set 1: chr1:0-50, chr1:100-150 (two separate intervals with gap 50-100)
+    Input set 2: chr1:40-80, chr2:0-200
+    Output: chr1:0-80, chr1:100-150, chr2:0-200 (overlaps merged)
+
+    Note: chr1:0-50 and chr1:40-80 merge to chr1:0-80. chr1:100-150 remains separate.
+    """
+    data1 = pd.DataFrame(
+        {
+            "chrom": ["chr1", "chr1"],
+            "start": [0, 100],
+            "end": [50, 150],
+        }
+    )
+    data2 = pd.DataFrame(
+        {
+            "chrom": ["chr1", "chr2"],
+            "start": [40, 0],
+            "end": [80, 200],
+        }
+    )
+
+    gs1 = GenomicSet(data1)
+    gs2 = GenomicSet(data2)
+    result = gs1 | gs2
+
+    expected = GenomicSet(
+        pd.DataFrame(
+            {
+                "chrom": ["chr1", "chr1", "chr2"],
+                "start": [0, 100, 0],
+                "end": [80, 150, 200],
+            }
+        )
+    )
+    assert result == expected
+
+
+def test_genomic_set_intersection():
+    """Test intersection operation (&) between two GenomicSets.
+
+    Input set 1: chr1:0-50, chr1:100-150
+    Input set 2: chr1:25-75, chr1:120-200
+    Output: chr1:25-50, chr1:120-150 (only overlapping regions)
+
+    Note: chr1:0-50 and chr1:100-150 are separate intervals (not merged due to gap).
+    """
+    data1 = pd.DataFrame(
+        {
+            "chrom": ["chr1", "chr1"],
+            "start": [0, 100],
+            "end": [50, 150],
+        }
+    )
+    data2 = pd.DataFrame(
+        {
+            "chrom": ["chr1", "chr1"],
+            "start": [25, 120],
+            "end": [75, 200],
+        }
+    )
+
+    gs1 = GenomicSet(data1)
+    gs2 = GenomicSet(data2)
+    result = gs1 & gs2
+
+    expected = GenomicSet(
+        pd.DataFrame(
+            {
+                "chrom": ["chr1", "chr1"],
+                "start": [25, 120],
+                "end": [50, 150],
+            }
+        )
+    )
+    assert result == expected
+
+
+def test_genomic_set_subtraction():
+    """Test subtraction operation (-) between two GenomicSets.
+
+    Input set 1: chr1:0-200 (single merged interval)
+    Input set 2: chr1:40-60
+    Output: chr1:0-40, chr1:60-200 (subtracted region removed, creating two intervals)
+    """
+    data1 = pd.DataFrame(
+        {
+            "chrom": ["chr1"],
+            "start": [0],
+            "end": [200],
+        }
+    )
+    data2 = pd.DataFrame(
+        {
+            "chrom": ["chr1"],
+            "start": [40],
+            "end": [60],
+        }
+    )
+
+    gs1 = GenomicSet(data1)
+    gs2 = GenomicSet(data2)
+    result = gs1 - gs2
+
+    expected = GenomicSet(
+        pd.DataFrame(
+            {
+                "chrom": ["chr1", "chr1"],
+                "start": [0, 60],
+                "end": [40, 200],
+            }
+        )
+    )
+    assert result == expected
+
+
+def test_genomic_set_union_no_overlap():
+    """Test union with completely non-overlapping intervals.
+
+    Input set 1: chr1:0-50
+    Input set 2: chr2:100-200
+    Output: chr1:0-50, chr2:100-200 (all intervals included, no merging)
+    """
+    data1 = pd.DataFrame(
+        {
+            "chrom": ["chr1"],
+            "start": [0],
+            "end": [50],
+        }
+    )
+    data2 = pd.DataFrame(
+        {
+            "chrom": ["chr2"],
+            "start": [100],
+            "end": [200],
+        }
+    )
+
+    gs1 = GenomicSet(data1)
+    gs2 = GenomicSet(data2)
+    result = gs1 | gs2
+
+    expected = GenomicSet(
+        pd.DataFrame(
+            {
+                "chrom": ["chr1", "chr2"],
+                "start": [0, 100],
+                "end": [50, 200],
+            }
+        )
+    )
+    assert result == expected
+
+
+def test_genomic_set_intersection_no_overlap():
+    """Test intersection with no overlapping intervals.
+
+    Input set 1: chr1:0-50
+    Input set 2: chr1:100-200
+    Output: (empty set - no overlap)
+    """
+    data1 = pd.DataFrame(
+        {
+            "chrom": ["chr1"],
+            "start": [0],
+            "end": [50],
+        }
+    )
+    data2 = pd.DataFrame(
+        {
+            "chrom": ["chr1"],
+            "start": [100],
+            "end": [200],
+        }
+    )
+
+    gs1 = GenomicSet(data1)
+    gs2 = GenomicSet(data2)
+    result = gs1 & gs2
+
+    expected = GenomicSet(
+        pd.DataFrame(
+            {
+                "chrom": [],
+                "start": [],
+                "end": [],
+            }
+        )
+    )
+    assert result == expected
+
+
+def test_genomic_set_subtraction_no_overlap():
+    """Test subtraction when there's no overlap.
+
+    Input set 1: chr1:0-50
+    Input set 2: chr1:100-200
+    Output: chr1:0-50 (unchanged, no overlap to subtract)
+    """
+    data1 = pd.DataFrame(
+        {
+            "chrom": ["chr1"],
+            "start": [0],
+            "end": [50],
+        }
+    )
+    data2 = pd.DataFrame(
+        {
+            "chrom": ["chr1"],
+            "start": [100],
+            "end": [200],
+        }
+    )
+
+    gs1 = GenomicSet(data1)
+    gs2 = GenomicSet(data2)
+    result = gs1 - gs2
+
+    expected = GenomicSet(
+        pd.DataFrame(
+            {
+                "chrom": ["chr1"],
+                "start": [0],
+                "end": [50],
+            }
+        )
+    )
+    assert result == expected
+
+
+def test_genomic_set_different_chromosomes():
+    """Test operations with intervals on different chromosomes.
+
+    Input set 1: chr1:0-100, chr2:0-100
+    Input set 2: chr1:50-150, chr3:50-150
+
+    Union output: chr1:0-150, chr2:0-100, chr3:50-150 (all chromosomes)
+    Intersection output: chr1:50-100 (only chr1 overlaps)
+    Subtraction output: chr1:0-50, chr2:0-100 (chr1 overlap removed, chr2 unchanged)
+    """
+    data1 = pd.DataFrame(
+        {
+            "chrom": ["chr1", "chr2"],
+            "start": [0, 0],
+            "end": [100, 100],
+        }
+    )
+    data2 = pd.DataFrame(
+        {
+            "chrom": ["chr1", "chr3"],
+            "start": [50, 50],
+            "end": [150, 150],
+        }
+    )
+
+    gs1 = GenomicSet(data1)
+    gs2 = GenomicSet(data2)
+
+    union_result = gs1 | gs2
+    expected_union = GenomicSet(
+        pd.DataFrame(
+            {
+                "chrom": ["chr1", "chr2", "chr3"],
+                "start": [0, 0, 50],
+                "end": [150, 100, 150],
+            }
+        )
+    )
+    assert union_result == expected_union
+
+    intersection_result = gs1 & gs2
+    expected_intersection = GenomicSet(
+        pd.DataFrame(
+            {
+                "chrom": ["chr1"],
+                "start": [50],
+                "end": [100],
+            }
+        )
+    )
+    assert intersection_result == expected_intersection
+
+    subtraction_result = gs1 - gs2
+    expected_subtraction = GenomicSet(
+        pd.DataFrame(
+            {
+                "chrom": ["chr1", "chr2"],
+                "start": [0, 0],
+                "end": [50, 100],
+            }
+        )
+    )
+    assert subtraction_result == expected_subtraction
+
+
+def test_genomic_set_to_pandas():
+    """Test conversion to pandas DataFrame.
+
+    Input: chr1:0-50, chr2:100-200
+    Output: Same intervals as pandas DataFrame
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1", "chr2"],
+            "start": [0, 100],
+            "end": [50, 200],
+        }
+    )
+    gs = GenomicSet(data)
+    df = gs.to_pandas()
+
+    expected = pd.DataFrame(
+        {
+            "chrom": ["chr1", "chr2"],
+            "start": [0, 100],
+            "end": [50, 200],
+        }
+    )
+    pd.testing.assert_frame_equal(df, expected)
+    # Also verify equality works
+    assert gs == GenomicSet(expected)
+
+
+def test_genomic_set_empty():
+    """Test GenomicSet with empty DataFrame.
+
+    Input: (empty set)
+    Output: (empty set)
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": [],
+            "start": [],
+            "end": [],
+        }
+    )
+    gs = GenomicSet(data)
+
+    expected = GenomicSet(
+        pd.DataFrame(
+            {
+                "chrom": [],
+                "start": [],
+                "end": [],
+            }
+        )
+    )
+    assert gs == expected
+
+
+def test_genomic_set_repr():
+    """Test string representation of GenomicSet.
+
+    Input: chr1:0-100
+    Output: String representation containing "GenomicSet"
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1"],
+            "start": [0],
+            "end": [100],
+        }
+    )
+    gs = GenomicSet(data)
+    repr_str = repr(gs)
+
+    assert "GenomicSet" in repr_str
+
+
+def test_genomic_set_adjacent_intervals():
+    """Test that adjacent intervals (touching but not overlapping) are handled correctly.
+
+    Input: chr1:0-50, chr1:50-100 (adjacent/touching intervals)
+    Output: chr1:0-100 (adjacent intervals merged)
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1", "chr1"],
+            "start": [0, 50],
+            "end": [50, 100],
+        }
+    )
+    gs = GenomicSet(data)
+
+    # Adjacent intervals should be merged by bioframe
+    expected = GenomicSet(
+        pd.DataFrame(
+            {
+                "chrom": ["chr1"],
+                "start": [0],
+                "end": [100],
+            }
+        )
+    )
+    assert gs == expected
+
+
+def test_genomic_set_single_interval():
+    """Test GenomicSet with a single interval.
+
+    Input: chr1:100-200
+    Output: chr1:100-200 (unchanged)
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1"],
+            "start": [100],
+            "end": [200],
+        }
+    )
+    gs = GenomicSet(data)
+
+    expected = GenomicSet(
+        pd.DataFrame(
+            {
+                "chrom": ["chr1"],
+                "start": [100],
+                "end": [200],
+            }
+        )
+    )
+    assert gs == expected
+
+
+def test_genomic_set_self_union():
+    """Test union of a GenomicSet with itself.
+
+    Input: chr1:0-100 | chr1:0-100
+    Output: chr1:0-100 (union with itself equals original)
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1"],
+            "start": [0],
+            "end": [100],
+        }
+    )
+    gs = GenomicSet(data)
+    result = gs | gs
+
+    assert result == gs
+
+
+def test_genomic_set_self_intersection():
+    """Test intersection of a GenomicSet with itself.
+
+    Input: chr1:0-100 & chr1:0-100
+    Output: chr1:0-100 (intersection with itself equals original)
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1"],
+            "start": [0],
+            "end": [100],
+        }
+    )
+    gs = GenomicSet(data)
+    result = gs & gs
+
+    assert result == gs
+
+
+def test_genomic_set_self_subtraction():
+    """Test subtraction of a GenomicSet from itself.
+
+    Input: chr1:0-100 - chr1:0-100
+    Output: (empty set - subtracting itself removes everything)
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1"],
+            "start": [0],
+            "end": [100],
+        }
+    )
+    gs = GenomicSet(data)
+    result = gs - gs
+
+    expected = GenomicSet(
+        pd.DataFrame(
+            {
+                "chrom": [],
+                "start": [],
+                "end": [],
+            }
+        )
+    )
+    assert result == expected
+
+
+def test_genomic_set_equality():
+    """Test equality comparison between GenomicSets.
+
+    Input set 1: chr1:0-50, chr2:100-200
+    Input set 2: chr1:0-50, chr2:100-200 (same as set 1)
+    Input set 3: chr1:0-51, chr2:100-200 (different end)
+
+    Tests:
+    - Set 1 == Set 2: True (identical intervals)
+    - Set 1 != Set 3: True (different intervals)
+    - Set 1 != non-GenomicSet: True (different type)
+    """
+    data1 = pd.DataFrame(
+        {
+            "chrom": ["chr1", "chr2"],
+            "start": [0, 100],
+            "end": [50, 200],
+        }
+    )
+    data2 = pd.DataFrame(
+        {
+            "chrom": ["chr1", "chr2"],
+            "start": [0, 100],
+            "end": [50, 200],
+        }
+    )
+    data3 = pd.DataFrame(
+        {
+            "chrom": ["chr1", "chr2"],
+            "start": [0, 100],
+            "end": [51, 200],  # Different end value
+        }
+    )
+
+    gs1 = GenomicSet(data1)
+    gs2 = GenomicSet(data2)
+    gs3 = GenomicSet(data3)
+
+    assert gs1 == gs2
+    assert gs2 == gs1
+    assert gs1 != gs3
+    assert gs3 != gs1
+    assert gs1 != "not a GenomicSet"
+    assert gs1 != None  # noqa: E711
+    assert gs1 != 123
+
+
+def test_genomic_set_equality_empty():
+    """Test equality with empty GenomicSets.
+
+    Input: (empty set) == (empty set)
+    Output: True (empty sets are equal)
+    """
+    empty1 = GenomicSet(
+        pd.DataFrame(
+            {
+                "chrom": [],
+                "start": [],
+                "end": [],
+            }
+        )
+    )
+    empty2 = GenomicSet(
+        pd.DataFrame(
+            {
+                "chrom": [],
+                "start": [],
+                "end": [],
+            }
+        )
+    )
+
+    assert empty1 == empty2
+    assert empty2 == empty1
+
+
+# Invalid input tests
+def test_genomic_set_zero_length_interval():
+    """Test that GenomicSet accepts zero-length intervals (start == end).
+
+    Input: chr1:50-50 (start equals end, zero-length interval)
+    Output: chr1:50-50 (bioframe allows zero-length intervals)
+
+    Note: While conceptually zero-length intervals may seem invalid,
+    bioframe's validation only checks that start <= end (not start < end).
+    Zero-length intervals are technically valid in bedFrame format.
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1"],
+            "start": [50],
+            "end": [50],  # start == end, zero-length interval
+        }
+    )
+
+    # This should work - bioframe allows start == end
+    gs = GenomicSet(data)
+    result_df = gs.to_pandas()
+    assert len(result_df) == 1
+    assert result_df.iloc[0]["chrom"] == "chr1"
+    assert result_df.iloc[0]["start"] == 50
+    assert result_df.iloc[0]["end"] == 50
+
+
+def test_genomic_set_invalid_start_greater_than_end():
+    """Test that GenomicSet rejects intervals where start > end.
+
+    Input: chr1:100-50 (start > end, invalid)
+    Expected: ValueError (invalid bedFrame - starts exceed ends)
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1"],
+            "start": [100],
+            "end": [50],  # start > end, invalid
+        }
+    )
+
+    with pytest.raises(ValueError, match="starts exceed ends"):
+        GenomicSet(data)
+
+
+def test_genomic_set_negative_start():
+    """Test that GenomicSet accepts negative start (bioframe allows it).
+
+    Input: chr1:-10-50 (negative start)
+    Output: chr1:-10-50 (bioframe doesn't validate non-negative starts)
+
+    Note: While bioframe validates start < end, it doesn't enforce start >= 0.
+    Negative starts are technically valid in bioframe's bedFrame format,
+    even though the constraint "0 <= start < end" may be conceptually desired.
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1"],
+            "start": [-10],  # negative start, but valid for bioframe
+            "end": [50],
+        }
+    )
+
+    # This should work - bioframe doesn't reject negative starts
+    gs = GenomicSet(data)
+    expected = GenomicSet(
+        pd.DataFrame(
+            {
+                "chrom": ["chr1"],
+                "start": [-10],
+                "end": [50],
+            }
+        )
+    )
+    assert gs == expected
+
+
+def test_genomic_set_invalid_chrom_dtype():
+    """Test that GenomicSet rejects invalid chrom dtypes.
+
+    Input: chrom column with int dtype (should be object/string/categorical)
+    Expected: TypeError (invalid bedFrame - invalid column dtypes)
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": [1, 2],  # int dtype instead of string
+            "start": [0, 100],
+            "end": [50, 200],
+        }
+    )
+
+    with pytest.raises(TypeError, match="Invalid bedFrame"):
+        GenomicSet(data)
+
+
+def test_genomic_set_invalid_start_dtype():
+    """Test that GenomicSet rejects invalid start dtype.
+
+    Input: start column with float dtype (should be int/Int64Dtype)
+    Expected: TypeError (invalid bedFrame - invalid column dtypes)
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1", "chr2"],
+            "start": [0.5, 100.0],  # float dtype instead of int
+            "end": [50, 200],
+        }
+    )
+
+    with pytest.raises(TypeError, match="Invalid bedFrame"):
+        GenomicSet(data)
+
+
+def test_genomic_set_invalid_end_dtype():
+    """Test that GenomicSet rejects invalid end dtype.
+
+    Input: end column with float dtype (should be int/Int64Dtype)
+    Expected: TypeError (invalid bedFrame - invalid column dtypes)
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1", "chr2"],
+            "start": [0, 100],
+            "end": [50.5, 200.0],  # float dtype instead of int
+        }
+    )
+
+    with pytest.raises(TypeError, match="Invalid bedFrame"):
+        GenomicSet(data)
+
+
+def test_genomic_set_invalid_string_start():
+    """Test that GenomicSet rejects string values in start column.
+
+    Input: start column with string values (should be int/Int64Dtype)
+    Expected: TypeError (invalid bedFrame - invalid column dtypes)
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": ["chr1"],
+            "start": ["0"],  # string instead of int
+            "end": [50],
+        }
+    )
+
+    with pytest.raises(TypeError, match="Invalid bedFrame"):
+        GenomicSet(data)
+
+
+def test_genomic_set_valid_categorical_chrom():
+    """Test that GenomicSet accepts categorical chrom dtype (valid).
+
+    Input: chr1:0-50 with categorical chrom
+    Output: chr1:0-50 (categorical is valid dtype for chrom)
+
+    Note: After processing, categorical may be converted to object dtype,
+    but the content should be equivalent.
+    """
+    data = pd.DataFrame(
+        {
+            "chrom": pd.Categorical(["chr1"]),
+            "start": [0],
+            "end": [50],
+        }
+    )
+
+    gs = GenomicSet(data)
+    # After merge and processing, check that we have the same intervals
+    result_df = gs.to_pandas()
+    assert len(result_df) == 1
+    assert result_df.iloc[0]["chrom"] == "chr1"
+    assert result_df.iloc[0]["start"] == 0
+    assert result_df.iloc[0]["end"] == 50

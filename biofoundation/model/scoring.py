@@ -5,7 +5,7 @@ from torch import Tensor
 from typing import cast
 from einops import rearrange, reduce
 
-from .base import CausalLM, MaskedLM
+from biofoundation.model.base import CausalLM, MaskedLM
 
 
 def compute_llr_mlm(

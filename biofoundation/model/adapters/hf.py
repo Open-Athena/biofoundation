@@ -3,7 +3,7 @@ from torch import Tensor
 from typing import cast
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
-from ..base import CausalLM, MaskedLM, Tokenizer
+from biofoundation.model.base import CausalLM, MaskedLM, Tokenizer
 
 
 class HFMaskedLM(MaskedLM):

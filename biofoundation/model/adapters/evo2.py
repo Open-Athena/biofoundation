@@ -4,7 +4,7 @@ from typing import cast
 
 from evo2 import Evo2
 from vortex.model.tokenizer import CharLevelTokenizer
-from ..base import CausalLM, Tokenizer
+from biofoundation.model.base import CausalLM, Tokenizer
 
 
 class Evo2CausalLM(CausalLM):
