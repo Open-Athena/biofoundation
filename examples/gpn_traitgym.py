@@ -14,6 +14,9 @@ from transformers import AutoTokenizer, AutoModelForMaskedLM
 # step = 300_000
 # model_name = f"data/gpn_animal_promoter_checkpoints/checkpoint-{step}"
 
+# step = 7_000
+# model_name = f"data/gpn_animal_promoter_early_checkpoints/checkpoint-{step}"
+
 model_name = "songlab/gpn-animal-promoter"
 
 tokenizer = HFTokenizer(AutoTokenizer.from_pretrained(model_name))
@@ -39,10 +42,10 @@ llr = run_llr_mlm(
     window_size,
     data_transform_on_the_fly=True,
     inference_kwargs=dict(
-        per_device_eval_batch_size=512,
+        per_device_eval_batch_size=128,
         # torch_compile=True,  # so fast it's not worth the compile time
         bf16_full_eval=True,
-        dataloader_num_workers=8,
+        dataloader_num_workers=4,
         remove_unused_columns=False,
         report_to="none",
     ),
@@ -62,3 +65,13 @@ print(f"{AUPRC=:.3f}")
 # | gpn-animal-promoter (200k) | 0.379 |
 # | gpn-animal-promoter (300k) | 0.392 |
 # | gpn-animal-promoter (370k) | 0.397 |
+# | gpn-animal-promoter-early (1k)  | 0.106 |
+# | gpn-animal-promoter-early (2k)  | 0.117 |
+# | gpn-animal-promoter-early (3k)  | 0.137 |
+# | gpn-animal-promoter-early (4k)  | 0.138 |
+# | gpn-animal-promoter-early (5k)  | 0.137 |
+# | gpn-animal-promoter-early (6k)  | 0.138 |
+# | gpn-animal-promoter-early (7k)  | 0.143
+# | gpn-animal-promoter-early (8k)  | 0.144 |
+# | gpn-animal-promoter-early (9k)  | 0.150 |
+# | gpn-animal-promoter-early (10k) | 0.158 |
