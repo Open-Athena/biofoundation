@@ -3,7 +3,6 @@ from biofoundation.model.adapters.hf import HFTokenizer
 from biofoundation.model.adapters.gpn import GPNMaskedLM
 from biofoundation.inference import run_llr_mlm
 from datasets import Dataset, load_dataset
-import gpn.model
 import numpy as np
 import pandas as pd
 from sklearn.metrics import average_precision_score
@@ -13,12 +12,15 @@ from transformers import AutoTokenizer, AutoModelForMaskedLM
 # step = 60000
 # model_name = f"data/gpn_checkpoints/checkpoint-{step}"
 
-# step = 300_000
+# step = 10_000
 # model_name = f"data/gpn_animal_promoter_checkpoints/checkpoint-{step}"
 
-# model_name = "songlab/gpn-animal-promoter"
+# step = 9_000
+# model_name = f"data/gpn_animal_promoter_early_checkpoints/checkpoint-{step}"
 
-model_name = "../gpn/analysis/gpn_animal_promoter/second_part/checkpoints/checkpoint-100000"
+# model_name = "../gpn/analysis/gpn_animal_promoter/second_part/checkpoints/checkpoint-100000"
+
+model_name = "songlab/gpn-animal-promoter"
 
 tokenizer = HFTokenizer(AutoTokenizer.from_pretrained(model_name))
 model = GPNMaskedLM(AutoModelForMaskedLM.from_pretrained(model_name))
@@ -34,7 +36,9 @@ dataset = load_dataset(
     split="test",
 )
 V = dataset.to_pandas()
-subset = pd.read_parquet("https://huggingface.co/datasets/songlab/TraitGym/resolve/main/mendelian_traits_matched_9/subset/nonexonic_AND_proximal.parquet")
+subset = pd.read_parquet(
+    "https://huggingface.co/datasets/songlab/TraitGym/resolve/main/mendelian_traits_matched_9/subset/nonexonic_AND_proximal.parquet"
+)
 V = V.merge(subset, on=["chrom", "pos", "ref", "alt"], how="inner")
 label = np.array(V["label"])
 dataset = Dataset.from_pandas(V, preserve_index=False)
@@ -47,10 +51,10 @@ llr = run_llr_mlm(
     window_size,
     data_transform_on_the_fly=True,
     inference_kwargs=dict(
-        per_device_eval_batch_size=512,
+        per_device_eval_batch_size=128,
         # torch_compile=True,  # so fast it's not worth the compile time
         bf16_full_eval=True,
-        dataloader_num_workers=8,
+        dataloader_num_workers=4,
         remove_unused_columns=False,
         report_to="none",
     ),
@@ -61,5 +65,16 @@ print(f"{AUPRC=:.3f}")
 
 # | Step   | AUPRC |
 # |--------|-------|
-# | gpn-animal-promoter (370k) | 0.566 |
+# | gpn-animal-promoter (10k)         | 0.157 |
+# | gpn-animal-promoter (370k)        | 0.566 |
 # | gpn-animal-promoter (370k + 100k) | 0.621 |
+# | gpn-animal-promoter-early (1k)    | 0.107 |
+# | gpn-animal-promoter-early (2k)    | 0.114 |
+# | gpn-animal-promoter-early (3k)    | 0.120 |
+# | gpn-animal-promoter-early (4k)    | 0.136 |
+# | gpn-animal-promoter-early (5k)    | 0.131 |
+# | gpn-animal-promoter-early (6k)    | 0.136 |
+# | gpn-animal-promoter-early (7k)    | 0.138 |
+# | gpn-animal-promoter-early (8k)    | 0.138 |
+# | gpn-animal-promoter-early (9k)    | 0.145 |
+# | gpn-animal-promoter-early (10k)   | 0.146 |
