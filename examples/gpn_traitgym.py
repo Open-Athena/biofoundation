@@ -3,6 +3,7 @@ from biofoundation.model.adapters.hf import HFTokenizer
 from biofoundation.model.adapters.gpn import GPNMaskedLM
 from biofoundation.inference import run_llr_mlm
 from datasets import load_dataset
+import gpn.model  # noqa: F401  # Registers the GPN architecture
 import numpy as np
 from sklearn.metrics import average_precision_score
 from transformers import AutoTokenizer, AutoModelForMaskedLM
@@ -16,6 +17,8 @@ from transformers import AutoTokenizer, AutoModelForMaskedLM
 
 # step = 7_000
 # model_name = f"data/gpn_animal_promoter_early_checkpoints/checkpoint-{step}"
+
+# model_name = "../gpn/analysis/gpn_animal_promoter/second_part/checkpoints/checkpoint-130000"
 
 model_name = "songlab/gpn-animal-promoter"
 
@@ -65,6 +68,7 @@ print(f"{AUPRC=:.3f}")
 # | gpn-animal-promoter (200k) | 0.379 |
 # | gpn-animal-promoter (300k) | 0.392 |
 # | gpn-animal-promoter (370k) | 0.397 |
+# | gpn-animal-promoter (370k + 130k) | 0.430 |
 # | gpn-animal-promoter-early (1k)  | 0.106 |
 # | gpn-animal-promoter-early (2k)  | 0.117 |
 # | gpn-animal-promoter-early (3k)  | 0.137 |
