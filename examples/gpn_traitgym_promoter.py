@@ -13,8 +13,7 @@ from transformers import AutoTokenizer, AutoModelForMaskedLM
 # step = 60000
 # model_name = f"data/gpn_checkpoints/checkpoint-{step}"
 
-# step = 10_000
-# model_name = f"data/gpn_animal_promoter_checkpoints/checkpoint-{step}"
+# model_name = f"data/gpn_animal_promoter_checkpoints/checkpoint-100000"
 
 # step = 9_000
 # model_name = f"data/gpn_animal_promoter_early_checkpoints/checkpoint-{step}"
@@ -67,6 +66,10 @@ print(f"{AUPRC=:.3f}")
 # | Step   | AUPRC |
 # |--------|-------|
 # | gpn-animal-promoter (10k)         | 0.157 |
+# | gpn-animal-promoter (20k)         | 0.180 |
+# | gpn-animal-promoter (30k)         | 0.168 |
+# | gpn-animal-promoter (50k)         | 0.212 |
+# | gpn-animal-promoter (100k)        | 0.312 |
 # | gpn-animal-promoter (370k)        | 0.566 |
 # | gpn-animal-promoter (370k + 100k) | 0.621 |
 # | gpn-animal-promoter (370k + 110k) | 0.614 |
