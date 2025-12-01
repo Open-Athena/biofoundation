@@ -29,6 +29,10 @@ uv pip install -e .
 uv pip install -e .[mamba]
 # GPN
 uv pip install -e .[gpn]
+# GLM-Experiments
+uv pip install -e .[glm-experiments]
+# Then manually install glm-experiments to avoid circular dependency:
+uv pip install git+https://github.com/Open-Athena/glm-experiments
 ```
 
 ### Docker Installation (For Evo2)
