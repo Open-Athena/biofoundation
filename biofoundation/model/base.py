@@ -22,6 +22,23 @@ class MaskedLM(nn.Module, ABC):
         pass
 
 
+class EmbeddingModel(nn.Module, ABC):
+    @abstractmethod
+    def forward(
+        self,
+        input_ids: Int[Tensor, "B L"],
+    ) -> Float[Tensor, "B L D"]:
+        """Forward pass to extract embeddings.
+
+        Args:
+            input_ids: Token IDs with shape [batch, seq_len]
+
+        Returns:
+            Hidden state embeddings with shape [batch, seq_len, embedding_dim]
+        """
+        pass
+
+
 class Tokenizer(ABC):
     """Abstract base class for tokenizers in biofoundation.
 
