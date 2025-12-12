@@ -5,7 +5,7 @@ from torch import Tensor
 from typing import cast
 from einops import rearrange, reduce
 
-from biofoundation.model.base import CausalLM, MaskedLM
+from biofoundation.model.base import CausalLM, EmbeddingModel, MaskedLM
 
 
 def compute_llr_mlm(
@@ -142,3 +142,34 @@ def _clm_seq_logprob(
     log_probs = _logits_to_logprobs(logits, input_ids)
     # seq-level log-probability
     return reduce(log_probs.float(), "B L -> B", "sum")
+
+
+def compute_euclidean_distance(
+    model: EmbeddingModel,
+    input_ids: Int[Tensor, "B 2 L"],
+) -> Float[Tensor, " B"]:
+    """Compute Euclidean distance between reference and alternate embeddings.
+
+    Args:
+        model: Embedding model
+        input_ids: Input sequences with shape [B, 2, L] where the 2 sequences are [ref, alt]
+
+    Returns:
+        Euclidean distance with shape [B]
+    """
+    B = input_ids.shape[0]
+    # Reshape to process both sequences together: [B*2, L]
+    input_ids = rearrange(input_ids, "B V L -> (B V) L")
+
+    # Get embeddings from the model: [B*2, L, D]
+    embeddings = model(input_ids)
+
+    # Reshape to [B, 2, L*D] and flatten L and D dimensions
+    embeddings = rearrange(embeddings, "(B V) L D -> B V (L D)", B=B)
+
+    # Extract ref and alt embeddings: [B, L*D] each
+    ref_emb = embeddings[:, 0, :]
+    alt_emb = embeddings[:, 1, :]
+
+    # Compute pairwise Euclidean distance
+    return F.pairwise_distance(ref_emb, alt_emb)  # [B]
