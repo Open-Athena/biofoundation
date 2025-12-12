@@ -19,6 +19,7 @@ from biofoundation.model.scoring import (
     compute_reflogprob_clm,
     compute_llr_mlm,
     compute_llr_clm,
+    compute_euclidean_distance,
 )
 
 
@@ -92,6 +93,26 @@ def run_llr_clm(
         tokenizer,
         dataset,
         compute_fn=compute_llr_clm,
+        data_transform_fn=partial(
+            transform_llr_clm, genome=genome, window_size=window_size
+        ),
+        **kwargs,
+    )
+
+
+def run_euclidean_distance(
+    model: nn.Module,
+    tokenizer: Tokenizer,
+    dataset: datasets.Dataset,
+    genome: Genome,
+    window_size: int,
+    **kwargs: Any,
+) -> Any:
+    return run_inference(
+        model,
+        tokenizer,
+        dataset,
+        compute_fn=compute_euclidean_distance,
         data_transform_fn=partial(
             transform_llr_clm, genome=genome, window_size=window_size
         ),
