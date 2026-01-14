@@ -3,7 +3,13 @@ from torch import Tensor
 from typing import cast
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
-from biofoundation.model.base import CausalLM, EmbeddingModel, MaskedLM, Tokenizer
+from biofoundation.model.base import (
+    CausalLM,
+    CausalLMWithEmbeddings,
+    EmbeddingModel,
+    MaskedLM,
+    Tokenizer,
+)
 
 
 class HFMaskedLM(MaskedLM):
@@ -44,6 +50,27 @@ class HFEmbeddingModel(EmbeddingModel):
             middle_idx = len(hidden_states) // 2
             hidden_state = hidden_states[middle_idx]
         return cast(Float[Tensor, "B L D"], hidden_state)
+
+
+class HFCausalLMWithEmbeddings(CausalLMWithEmbeddings):
+    def __init__(self, model: PreTrainedModel):
+        assert model.__class__.__name__.endswith("CausalLM")
+        super().__init__()
+        self._model = model
+
+    def forward(
+        self, input_ids: Int[Tensor, "B L"]
+    ) -> tuple[Float[Tensor, "B L V"], Float[Tensor, "B L D"], Float[Tensor, "B L D"]]:
+        output = self._model(input_ids=input_ids, output_hidden_states=True)
+        logits = output.logits
+        last_hidden_state = output.hidden_states[-1]
+        middle_idx = len(output.hidden_states) // 2
+        middle_hidden_state = output.hidden_states[middle_idx]
+        return (
+            cast(Float[Tensor, "B L V"], logits),
+            cast(Float[Tensor, "B L D"], last_hidden_state),
+            cast(Float[Tensor, "B L D"], middle_hidden_state),
+        )
 
 
 class HFTokenizer(Tokenizer):

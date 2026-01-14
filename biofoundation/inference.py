@@ -20,6 +20,7 @@ from biofoundation.model.scoring import (
     compute_llr_mlm,
     compute_llr_clm,
     compute_euclidean_distance,
+    compute_llr_and_embedding_distance,
 )
 
 
@@ -113,6 +114,45 @@ def run_euclidean_distance(
         tokenizer,
         dataset,
         compute_fn=compute_euclidean_distance,
+        data_transform_fn=partial(
+            transform_llr_clm, genome=genome, window_size=window_size
+        ),
+        **kwargs,
+    )
+
+
+def run_llr_and_embedding_distance(
+    model: nn.Module,
+    tokenizer: Tokenizer,
+    dataset: datasets.Dataset,
+    genome: Genome,
+    window_size: int,
+    **kwargs: Any,
+) -> Any:
+    """Run combined LLR and embedding distance inference.
+
+    Computes LLR, last-layer embedding distance, and middle-layer embedding distance
+    in a single forward pass.
+
+    Args:
+        model: CausalLMWithEmbeddings model
+        tokenizer: Tokenizer for the model
+        dataset: Dataset with variant information (chrom, pos, ref, alt)
+        genome: Genome object for sequence extraction
+        window_size: Window size for sequence context
+        **kwargs: Additional arguments passed to run_inference
+
+    Returns:
+        Numpy array with shape [B, 3] where columns are:
+            - [:, 0]: LLR (log-likelihood ratio)
+            - [:, 1]: Last-layer embedding distance
+            - [:, 2]: Middle-layer embedding distance
+    """
+    return run_inference(
+        model,
+        tokenizer,
+        dataset,
+        compute_fn=compute_llr_and_embedding_distance,
         data_transform_fn=partial(
             transform_llr_clm, genome=genome, window_size=window_size
         ),
