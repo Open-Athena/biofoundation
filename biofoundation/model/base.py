@@ -39,6 +39,26 @@ class EmbeddingModel(nn.Module, ABC):
         pass
 
 
+class CausalLMWithEmbeddings(nn.Module, ABC):
+    @abstractmethod
+    def forward(
+        self,
+        input_ids: Int[Tensor, "B L"],
+    ) -> tuple[Float[Tensor, "B L V"], Float[Tensor, "B L D"], Float[Tensor, "B L D"]]:
+        """Forward pass returning logits and embeddings.
+
+        Args:
+            input_ids: Token IDs with shape [batch, seq_len]
+
+        Returns:
+            Tuple of (logits, last_hidden_state, middle_hidden_state):
+                - logits: [batch, seq_len, vocab_size]
+                - last_hidden_state: [batch, seq_len, embedding_dim]
+                - middle_hidden_state: [batch, seq_len, embedding_dim]
+        """
+        pass
+
+
 class Tokenizer(ABC):
     """Abstract base class for tokenizers in biofoundation.
 

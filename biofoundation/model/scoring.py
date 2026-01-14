@@ -5,7 +5,12 @@ from torch import Tensor
 from typing import cast
 from einops import rearrange, reduce
 
-from biofoundation.model.base import CausalLM, EmbeddingModel, MaskedLM
+from biofoundation.model.base import (
+    CausalLM,
+    CausalLMWithEmbeddings,
+    EmbeddingModel,
+    MaskedLM,
+)
 
 
 def compute_llr_mlm(
@@ -173,3 +178,43 @@ def compute_euclidean_distance(
 
     # Compute pairwise Euclidean distance
     return F.pairwise_distance(ref_emb, alt_emb)  # [B]
+
+
+def compute_llr_and_embedding_distance(
+    model: CausalLMWithEmbeddings,
+    input_ids: Int[Tensor, "B 2 L"],
+) -> Float[Tensor, "B 3"]:
+    """Compute LLR, last-layer distance, and middle-layer distance in one pass.
+
+    Args:
+        model: CausalLM model that returns logits and embeddings
+        input_ids: Input sequences with shape [B, 2, L] where the 2 sequences are [ref, alt]
+
+    Returns:
+        Tensor with shape [B, 3] where columns are:
+            - [:, 0]: LLR (log-likelihood ratio: alt_logprob - ref_logprob)
+            - [:, 1]: Euclidean distance between last-layer embeddings
+            - [:, 2]: Euclidean distance between middle-layer embeddings
+    """
+    B = input_ids.shape[0]
+    # Reshape to process both sequences together: [B*2, L]
+    input_ids_flat = rearrange(input_ids, "B V L -> (B V) L")
+
+    # Single forward pass gets everything
+    logits, last_emb, middle_emb = model(input_ids_flat)
+
+    # Compute LLR from logits
+    log_prob = _clm_seq_logprob(logits, input_ids_flat)
+    log_prob = rearrange(log_prob, "(B V) -> B V", B=B)
+    llr = log_prob[:, 1] - log_prob[:, 0]  # alt - ref
+
+    # Compute last-layer embedding distance
+    last_emb = rearrange(last_emb, "(B V) L D -> B V (L D)", B=B)
+    last_distance = F.pairwise_distance(last_emb[:, 0], last_emb[:, 1])
+
+    # Compute middle-layer embedding distance
+    middle_emb = rearrange(middle_emb, "(B V) L D -> B V (L D)", B=B)
+    middle_distance = F.pairwise_distance(middle_emb[:, 0], middle_emb[:, 1])
+
+    # Stack into [B, 3] array
+    return torch.stack([llr, last_distance, middle_distance], dim=1)
