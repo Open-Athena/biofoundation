@@ -1,4 +1,4 @@
-from jaxtyping import Float, Int
+from jaxtyping import Bool, Float, Int
 import torch
 import torch.nn.functional as F
 from torch import Tensor
@@ -152,7 +152,7 @@ def _clm_seq_logprob(
 def compute_ll_clm(
     model: CausalLM,
     input_ids: Int[Tensor, "B L"],
-    is_upper: Int[Tensor, "B L"] | None = None,
+    is_upper: Bool[Tensor, "B L"] | None = None,
 ) -> Float[Tensor, "B 2"] | Float[Tensor, "B 4"]:
     """Per-sequence log-likelihood sums and target counts under a CLM.
 

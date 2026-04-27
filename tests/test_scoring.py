@@ -12,11 +12,13 @@ dataset-wide LL — matching how Marin/levanter computes ``eval/loss``.
 
 import math
 
+import datasets
 import torch
 from torch import Tensor
-from transformers import AutoModelForCausalLM
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from biofoundation.model.adapters.hf import HFCausalLM
+from biofoundation.inference import run_ll_clm
+from biofoundation.model.adapters.hf import HFCausalLM, HFTokenizer
 from biofoundation.model.base import CausalLM
 from biofoundation.model.scoring import compute_ll_clm
 
@@ -250,3 +252,39 @@ def test_compute_ll_clm_shape_without_mask():
     out = compute_ll_clm(model, input_ids)
     assert out.shape == (B, 2)
     assert torch.all(out[:, 1] == float(L - 1))
+
+
+def test_run_ll_clm_end_to_end():
+    """Smoke test: run_ll_clm threads transform_ll_clm + compute_ll_clm
+    through the HF Trainer batching pipeline and produces the expected
+    [N, 4] shape. Catches any future regression in the wiring of the
+    partial / data-transform / model-compute-fn pipeline."""
+    tokenizer = HFTokenizer(AutoTokenizer.from_pretrained("songlab/tokenizer-dna-mlm"))
+    model = HFCausalLM(AutoModelForCausalLM.from_pretrained(TINY_CLM))
+
+    seqs = ["ACGTAC", "AcGtAc", "acgtac", "ACGTAC"]
+    dataset = datasets.Dataset.from_dict({"seq": seqs})
+
+    pred = run_ll_clm(
+        model,
+        tokenizer,
+        dataset,
+        data_transform_on_the_fly=True,
+        inference_kwargs=dict(
+            per_device_eval_batch_size=2,
+            dataloader_num_workers=0,
+            remove_unused_columns=False,
+            report_to="none",
+        ),
+    )
+
+    assert pred.shape == (len(seqs), 4)
+    # Sanity: per-row n_upper + n_lower = L - 1 (= 6 - 1 = 5; tokenizer has no specials)
+    assert (pred[:, 2] + pred[:, 3] == 5).all()
+    # Row 0 and row 3 are identical sequences — same outputs.
+    assert (pred[0] == pred[3]).all()
+    # Row 0 (all upper) and row 2 (all lower) hit different is_upper buckets
+    # but since the tokenizer is case-insensitive, the *total* sum matches.
+    total_0 = pred[0, 0] + pred[0, 1]
+    total_2 = pred[2, 0] + pred[2, 1]
+    assert math.isclose(total_0, total_2, rel_tol=1e-5, abs_tol=1e-5)

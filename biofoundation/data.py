@@ -377,13 +377,12 @@ def transform_ll_clm(
 ) -> dict[str, Any]:
     """Prepare an example for CLM sequence-level log-likelihood scoring.
 
-    The raw ``seq`` is uppercased before tokenization, so the model
-    always sees the same byte stream it was trained on. The original
-    case is preserved in ``is_upper`` for the loss-weight breakdown.
-    This matters for case-sensitive (e.g. byte-level) tokenizers such
-    as Evo2's vortex CharLevelTokenizer, where ``'a'`` and ``'A'`` map
-    to different token ids; for case-insensitive DNA tokenizers like
-    Marin's it is a no-op.
+    The raw ``seq`` is uppercased before tokenization, so the tokenizer
+    always sees the case it was trained on. The original case is
+    preserved in ``is_upper`` for the loss-weight breakdown. This matters
+    for case-sensitive (e.g. byte-level) tokenizers such as Evo2's vortex
+    CharLevelTokenizer, where ``'a'`` and ``'A'`` map to different token
+    ids; for case-insensitive DNA tokenizers like Marin's it is a no-op.
 
     Char-level tokenization with ``add_special_tokens=False``, with BOS/EOS
     prepended/appended manually using ``tokenizer.bos_token_id`` /
@@ -391,6 +390,13 @@ def transform_ll_clm(
     source-aligned: ``is_upper[i]`` describes the character that produced
     ``input_ids[i]`` (False for special tokens). ``compute_ll_clm`` performs
     the source->target shift when scoring.
+
+    Note: special-token *targets* (e.g. EOS) end up with ``is_upper=False``
+    and so contribute to ``ll_sum_lower`` in ``compute_ll_clm``. For a
+    model trained with EOS, this means the EOS-prediction log-prob is
+    counted as "non-functional" — a negligible bias on long sequences
+    (~1 token in L-1) but worth knowing if you compare absolute
+    LL(non-functional) values across models with vs. without EOS.
 
     Returns:
         input_ids: [L] long tensor.
