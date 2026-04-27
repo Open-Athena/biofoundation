@@ -1778,6 +1778,33 @@ def test_transform_ll_clm_all_lower_and_all_upper():
     assert torch.equal(out_upper["input_ids"], out_lower["input_ids"])
 
 
+def test_transform_ll_clm_honors_disabled_auto_insertion():
+    """A tokenizer with bos/eos defined but auto-insertion disabled (a
+    common HF setup, e.g. GPT-2-style) must not gain extra special-token
+    targets. We honor whatever ``add_special_tokens=True`` returns; if
+    the tokenizer chose not to insert, neither do we."""
+
+    class _NoAutoInsertTokenizer(Tokenizer):
+        # bos/eos IDs are defined, but encode never inserts them.
+        def encode(self, text: str, add_special_tokens: bool = True) -> list[int]:
+            del add_special_tokens
+            return [{"a": 10, "c": 11, "g": 12, "t": 13}[c.lower()] for c in text]
+
+        @property
+        def bos_token_id(self) -> int:
+            return 99
+
+        @property
+        def eos_token_id(self) -> int:
+            return 98
+
+    out = transform_ll_clm({"seq": "ACgt"}, _NoAutoInsertTokenizer())
+    # No specials in the encoding → no specials in input_ids; is_upper is
+    # purely the per-char case. Crucially, n_total = len(seq), not len(seq)+2.
+    assert out["input_ids"].tolist() == [10, 11, 12, 13]
+    assert out["is_upper"].tolist() == [True, True, False, False]
+
+
 def test_transform_ll_clm_byte_level_tokenizer_uppercases():
     """Case-sensitive byte-level tokenizer (e.g. Evo2's vortex
     CharLevelTokenizer) must still produce correct, identical input_ids

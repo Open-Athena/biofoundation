@@ -384,19 +384,21 @@ def transform_ll_clm(
     CharLevelTokenizer, where ``'a'`` and ``'A'`` map to different token
     ids; for case-insensitive DNA tokenizers like Marin's it is a no-op.
 
-    Char-level tokenization with ``add_special_tokens=False``, with BOS/EOS
-    prepended/appended manually using ``tokenizer.bos_token_id`` /
-    ``tokenizer.eos_token_id`` when those are defined. ``is_upper`` is
-    source-aligned: ``is_upper[i]`` describes the character that produced
-    ``input_ids[i]`` (False for special tokens). ``compute_ll_clm`` performs
-    the source->target shift when scoring.
+    BOS/EOS handling follows the tokenizer's own ``add_special_tokens=True``
+    policy — we don't second-guess it. We then detect at most one BOS at
+    the start and one EOS at the end (if the tokenizer's
+    ``bos_token_id`` / ``eos_token_id`` matches there) and mark those
+    positions ``is_upper=False``. ``is_upper`` is source-aligned:
+    ``is_upper[i]`` describes the character that produced ``input_ids[i]``
+    (False for special tokens). ``compute_ll_clm`` performs the
+    source->target shift when scoring.
 
-    Note: special-token *targets* (e.g. EOS) end up with ``is_upper=False``
-    and so contribute to ``ll_sum_lower`` in ``compute_ll_clm``. For a
-    model trained with EOS, this means the EOS-prediction log-prob is
-    counted as "non-functional" — a negligible bias on long sequences
-    (~1 token in L-1) but worth knowing if you compare absolute
-    LL(non-functional) values across models with vs. without EOS.
+    Special-token *targets* (e.g. EOS, when the tokenizer auto-appends
+    one) end up with ``is_upper=False`` and so contribute to
+    ``ll_sum_lower`` in ``compute_ll_clm`` — a ~1-token bias on
+    LL(non-functional) for EOS-trained models, worth knowing if you
+    compare absolute LL(non-functional) values across models with vs.
+    without EOS.
 
     Returns:
         input_ids: [L] long tensor.
@@ -404,11 +406,7 @@ def transform_ll_clm(
                    uppercase character of ``example["seq"]``.
     """
     seq = example["seq"]
-    body_ids = tokenizer.encode(seq.upper(), add_special_tokens=False)
-    assert len(body_ids) == len(seq), (
-        "Char-level tokenization required for case-breakdown LL "
-        f"(got {len(body_ids)} tokens for {len(seq)} chars)."
-    )
+    full_ids = tokenizer.encode(seq.upper(), add_special_tokens=True)
 
     try:
         bos_id: int | None = tokenizer.bos_token_id
@@ -419,19 +417,20 @@ def transform_ll_clm(
     except AttributeError:
         eos_id = None
 
-    ids: list[int] = []
-    is_upper: list[bool] = []
-    if bos_id is not None:
-        ids.append(bos_id)
-        is_upper.append(False)
-    ids.extend(body_ids)
-    is_upper.extend(c.isupper() for c in seq)
-    if eos_id is not None:
-        ids.append(eos_id)
-        is_upper.append(False)
+    n_prefix = 1 if bos_id is not None and full_ids[:1] == [bos_id] else 0
+    n_suffix = 1 if eos_id is not None and full_ids[-1:] == [eos_id] else 0
+    body_len = len(full_ids) - n_prefix - n_suffix
+    assert body_len == len(seq), (
+        "Char-level tokenization required for case-breakdown LL "
+        f"(body={body_len} tokens vs {len(seq)} chars; "
+        "either non-char-level or unexpected special tokens)."
+    )
 
+    is_upper = (
+        [False] * n_prefix + [c.isupper() for c in seq] + [False] * n_suffix
+    )
     return dict(
-        input_ids=torch.tensor(ids, dtype=torch.long),
+        input_ids=torch.tensor(full_ids, dtype=torch.long),
         is_upper=torch.tensor(is_upper, dtype=torch.bool),
     )
 
