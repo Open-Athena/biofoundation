@@ -25,8 +25,5 @@ class Evo2Tokenizer(Tokenizer):
     def __init__(self, tokenizer: CharLevelTokenizer):
         self._tokenizer = tokenizer
 
-    def encode(self, text: str, add_special_tokens: bool = True) -> list[int]:
-        # Evo2's CharLevelTokenizer has no notion of special tokens, so the
-        # add_special_tokens flag is a no-op here.
-        del add_special_tokens
+    def encode(self, text: str, add_special_tokens: bool = True) -> list[int]:  # noqa: ARG002
         return list(map(int, self._tokenizer.tokenize(text)))

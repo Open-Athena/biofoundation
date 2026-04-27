@@ -82,27 +82,23 @@ def test_compute_ll_clm_hand_computed_two_token():
     logits = torch.tensor(
         [
             [
-                [0.0, 1.0, 0.0, 0.0],  # softmax: index 1 favoured
-                [2.0, 0.0, 0.0, 0.0],  # softmax: index 0 favoured
-                [9.0, 9.0, 9.0, 9.0],  # ignored
+                [0.0, 1.0, 0.0, 0.0],
+                [2.0, 0.0, 0.0, 0.0],
+                [9.0, 9.0, 9.0, 9.0],
             ]
         ]
     )
     input_ids = torch.tensor([[3, 1, 0]])
     model = _DeterministicCLM(logits)
 
-    log_softmax_0 = torch.log_softmax(
-        logits[0, 0], dim=-1
-    )  # for target input_ids[0,1]=1
-    log_softmax_1 = torch.log_softmax(
-        logits[0, 1], dim=-1
-    )  # for target input_ids[0,2]=0
+    log_softmax_0 = torch.log_softmax(logits[0, 0], dim=-1)
+    log_softmax_1 = torch.log_softmax(logits[0, 1], dim=-1)
     expected_sum = (log_softmax_0[1] + log_softmax_1[0]).item()
 
     out = compute_ll_clm(model, input_ids)
     assert out.shape == (1, 2)
     assert math.isclose(out[0, 0].item(), expected_sum, rel_tol=1e-6, abs_tol=1e-7)
-    assert out[0, 1].item() == 2.0  # n = L - 1 = 2
+    assert out[0, 1].item() == 2.0
 
 
 def test_compute_ll_clm_target_side_shift():

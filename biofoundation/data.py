@@ -409,25 +409,26 @@ def transform_ll_clm(
         "Char-level tokenization required for case-breakdown LL "
         f"(got {len(body_ids)} tokens for {len(seq)} chars)."
     )
-    char_is_upper = [c.isupper() for c in seq]
+
+    try:
+        bos_id: int | None = tokenizer.bos_token_id
+    except AttributeError:
+        bos_id = None
+    try:
+        eos_id: int | None = tokenizer.eos_token_id
+    except AttributeError:
+        eos_id = None
 
     ids: list[int] = []
     is_upper: list[bool] = []
-
-    try:
-        ids.append(tokenizer.bos_token_id)
+    if bos_id is not None:
+        ids.append(bos_id)
         is_upper.append(False)
-    except AttributeError:
-        pass
-
     ids.extend(body_ids)
-    is_upper.extend(char_is_upper)
-
-    try:
-        ids.append(tokenizer.eos_token_id)
+    is_upper.extend(c.isupper() for c in seq)
+    if eos_id is not None:
+        ids.append(eos_id)
         is_upper.append(False)
-    except AttributeError:
-        pass
 
     return dict(
         input_ids=torch.tensor(ids, dtype=torch.long),

@@ -156,17 +156,16 @@ def compute_ll_clm(
 ) -> Float[Tensor, "B 2"] | Float[Tensor, "B 4"]:
     """Per-sequence log-likelihood sums and target counts under a CLM.
 
-    Returns the *raw ingredients* for a dataset-wide token-weighted mean
-    LL — sums and counts, not means. Aggregation happens outside (the
-    caller does ``pred.sum(axis=0)`` then divides), which is what
-    Marin/levanter eval does and what makes the result correct in the
-    presence of all-upper / all-lower sequences.
+    Returns sums and counts (not means) so callers can aggregate to a
+    dataset-wide token-weighted mean LL by summing across rows then
+    dividing — correct even for sequences that are all-upper or
+    all-lower in their case mask.
 
-    The "case of a token" is the loss weight applied when *predicting*
-    that token. ``_logits_to_logprobs`` returns ``[B, L-1]`` where entry
-    ``[b, i]`` is ``log p(input_ids[b, i+1] | input_ids[b, :i+1])``, so
-    the relevant case is the case of the *target* ``input_ids[i+1]``. We
-    therefore slice ``is_upper[:, 1:]`` to align with the L-1 log-probs.
+    ``_logits_to_logprobs`` returns ``[B, L-1]`` where entry ``[b, i]``
+    is ``log p(input_ids[b, i+1] | input_ids[b, :i+1])``, so when an
+    ``is_upper`` mask is supplied, the relevant case is the case of the
+    *target* ``input_ids[i+1]`` — we slice ``is_upper[:, 1:]`` to align
+    with the L-1 log-probs.
 
     Output:
 
@@ -178,31 +177,22 @@ def compute_ll_clm(
       ``n_upper + n_lower = L - 1``. Special-token target positions
       (``is_upper = False``) fall into the "lower" bucket.
 
-    Aggregation pattern::
-
-        pred = ...                                         # [N, 4]
-        S_u, S_l, n_u, n_l = pred.astype(np.float64).sum(axis=0)
-        LL_all   = (S_u + S_l) / (n_u + n_l)
-        LL_upper = S_u / n_u
-        LL_lower = S_l / n_l
-
-    Per-row sums are fp32; cast to fp64 before summing across rows for a
-    realistic dataset (fp32 accumulates ~0.5 absolute error at totals of
-    ~10^6, which is reachable on a 16k-row eval set).
+    Per-row sums are fp32; aggregating across many rows can exceed fp32
+    precision (~0.5 absolute error at totals of ~10^6, reachable on a
+    16k-row eval set), so cast to fp64 before the cross-row sum.
     """
     logits = model(input_ids)
     logp = _logits_to_logprobs(logits, input_ids).float()  # [B, L-1]
     L_minus_1 = logp.shape[-1]
+    ll_sum_total = logp.sum(dim=-1)
     if is_upper is None:
-        ll_sum = logp.sum(dim=-1)
-        n = torch.full_like(ll_sum, float(L_minus_1))
-        return torch.stack([ll_sum, n], dim=-1)
+        n = torch.full_like(ll_sum_total, float(L_minus_1))
+        return torch.stack([ll_sum_total, n], dim=-1)
     upper_t = is_upper[:, 1:].float()
-    lower_t = 1.0 - upper_t
     n_upper = upper_t.sum(dim=-1)
-    n_lower = lower_t.sum(dim=-1)
     ll_sum_upper = (logp * upper_t).sum(dim=-1)
-    ll_sum_lower = (logp * lower_t).sum(dim=-1)
+    ll_sum_lower = ll_sum_total - ll_sum_upper
+    n_lower = float(L_minus_1) - n_upper
     return torch.stack([ll_sum_upper, ll_sum_lower, n_upper, n_lower], dim=-1)
 
 
