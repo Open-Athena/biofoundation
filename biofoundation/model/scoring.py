@@ -1,4 +1,4 @@
-from jaxtyping import Float, Int
+from jaxtyping import Bool, Float, Int
 import torch
 import torch.nn.functional as F
 from torch import Tensor
@@ -147,6 +147,53 @@ def _clm_seq_logprob(
     log_probs = _logits_to_logprobs(logits, input_ids)
     # seq-level log-probability
     return reduce(log_probs.float(), "B L -> B", "sum")
+
+
+def compute_ll_clm(
+    model: CausalLM,
+    input_ids: Int[Tensor, "B L"],
+    is_upper: Bool[Tensor, "B L"] | None = None,
+) -> Float[Tensor, "B 2"] | Float[Tensor, "B 4"]:
+    """Per-sequence log-likelihood sums and target counts under a CLM.
+
+    Returns sums and counts (not means) so callers can aggregate to a
+    dataset-wide token-weighted mean LL by summing across rows then
+    dividing — correct even for sequences that are all-upper or
+    all-lower in their case mask.
+
+    ``_logits_to_logprobs`` returns ``[B, L-1]`` where entry ``[b, i]``
+    is ``log p(input_ids[b, i+1] | input_ids[b, :i+1])``, so when an
+    ``is_upper`` mask is supplied, the relevant case is the case of the
+    *target* ``input_ids[i+1]`` — we slice ``is_upper[:, 1:]`` to align
+    with the L-1 log-probs.
+
+    Output:
+
+    - Without ``is_upper``: ``[B, 2]`` of ``(ll_sum, n)`` per row.
+      ``n = L - 1`` for every row.
+    - With ``is_upper``: ``[B, 4]`` of
+      ``(ll_sum_upper, ll_sum_lower, n_upper, n_lower)`` per row.
+      Invariants: ``ll_sum_upper + ll_sum_lower`` is the total sum,
+      ``n_upper + n_lower = L - 1``. Special-token target positions
+      (``is_upper = False``) fall into the "lower" bucket.
+
+    Per-row sums are fp32; aggregating across many rows can exceed fp32
+    precision (~0.5 absolute error at totals of ~10^6, reachable on a
+    16k-row eval set), so cast to fp64 before the cross-row sum.
+    """
+    logits = model(input_ids)
+    logp = _logits_to_logprobs(logits, input_ids).float()  # [B, L-1]
+    L_minus_1 = logp.shape[-1]
+    ll_sum_total = logp.sum(dim=-1)
+    if is_upper is None:
+        n = torch.full_like(ll_sum_total, float(L_minus_1))
+        return torch.stack([ll_sum_total, n], dim=-1)
+    upper_t = is_upper[:, 1:].float()
+    n_upper = upper_t.sum(dim=-1)
+    ll_sum_upper = (logp * upper_t).sum(dim=-1)
+    ll_sum_lower = ll_sum_total - ll_sum_upper
+    n_lower = float(L_minus_1) - n_upper
+    return torch.stack([ll_sum_upper, ll_sum_lower, n_upper, n_lower], dim=-1)
 
 
 def compute_euclidean_distance(

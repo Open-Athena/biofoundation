@@ -13,12 +13,14 @@ from biofoundation.data import (
     transform_reflogprob_clm,
     transform_llr_mlm,
     transform_llr_clm,
+    transform_ll_clm,
 )
 from biofoundation.model.scoring import (
     compute_reflogprob_mlm,
     compute_reflogprob_clm,
     compute_llr_mlm,
     compute_llr_clm,
+    compute_ll_clm,
     compute_euclidean_distance,
     compute_llr_and_embedding_distance,
 )
@@ -58,6 +60,13 @@ run_reflogprob_clm = partial(
     run_inference,
     compute_fn=compute_reflogprob_clm,
     data_transform_fn=transform_reflogprob_clm,
+)
+
+
+run_ll_clm = partial(
+    run_inference,
+    compute_fn=compute_ll_clm,
+    data_transform_fn=transform_ll_clm,
 )
 
 

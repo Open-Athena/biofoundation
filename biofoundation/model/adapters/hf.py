@@ -85,3 +85,23 @@ class HFTokenizer(Tokenizer):
     @property
     def mask_token_id(self) -> int:
         return cast(int, self._tokenizer.mask_token_id)
+
+    @property
+    def bos_token_id(self) -> int:
+        token_id = self._tokenizer.bos_token_id
+        if token_id is None:
+            raise AttributeError(
+                f"Underlying tokenizer {self._tokenizer.__class__.__name__} "
+                "has no BOS token configured."
+            )
+        return cast(int, token_id)
+
+    @property
+    def eos_token_id(self) -> int:
+        token_id = self._tokenizer.eos_token_id
+        if token_id is None:
+            raise AttributeError(
+                f"Underlying tokenizer {self._tokenizer.__class__.__name__} "
+                "has no EOS token configured."
+            )
+        return cast(int, token_id)
