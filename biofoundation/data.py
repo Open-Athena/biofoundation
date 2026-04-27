@@ -384,14 +384,13 @@ def transform_ll_clm(
     CharLevelTokenizer, where ``'a'`` and ``'A'`` map to different token
     ids; for case-insensitive DNA tokenizers like Marin's it is a no-op.
 
-    BOS/EOS handling follows the tokenizer's own ``add_special_tokens=True``
-    policy — we don't second-guess it. We then detect at most one BOS at
-    the start and one EOS at the end (if the tokenizer's
-    ``bos_token_id`` / ``eos_token_id`` matches there) and mark those
-    positions ``is_upper=False``. ``is_upper`` is source-aligned:
-    ``is_upper[i]`` describes the character that produced ``input_ids[i]``
-    (False for special tokens). ``compute_ll_clm`` performs the
-    source->target shift when scoring.
+    BOS/EOS handling follows the tokenizer's own policy — we don't
+    second-guess it. We detect at most one BOS at the start and one EOS
+    at the end (if the tokenizer's ``bos_token_id`` / ``eos_token_id``
+    matches there) and mark those positions ``is_upper=False``.
+    ``is_upper`` is source-aligned: ``is_upper[i]`` describes the
+    character that produced ``input_ids[i]`` (False for special tokens).
+    ``compute_ll_clm`` performs the source->target shift when scoring.
 
     Special-token *targets* (e.g. EOS, when the tokenizer auto-appends
     one) end up with ``is_upper=False`` and so contribute to
@@ -406,7 +405,7 @@ def transform_ll_clm(
                    uppercase character of ``example["seq"]``.
     """
     seq = example["seq"]
-    full_ids = tokenizer.encode(seq.upper(), add_special_tokens=True)
+    full_ids = tokenizer.encode(seq.upper())
 
     try:
         bos_id: int | None = tokenizer.bos_token_id

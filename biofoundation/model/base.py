@@ -67,14 +67,15 @@ class Tokenizer(ABC):
     """
 
     @abstractmethod
-    def encode(self, text: str, add_special_tokens: bool = True) -> list[int]:
+    def encode(self, text: str) -> list[int]:
         """Encode a single text string to token IDs.
+
+        The tokenizer's own special-token policy (e.g. whether BOS/EOS
+        are auto-inserted) applies — callers see whatever it would
+        normally produce.
 
         Args:
             text: Input string to encode
-            add_special_tokens: If True (default), prepend/append special
-                tokens (e.g. BOS/EOS) according to the tokenizer's
-                configuration. If False, return only the body tokens.
 
         Returns:
             List of token IDs

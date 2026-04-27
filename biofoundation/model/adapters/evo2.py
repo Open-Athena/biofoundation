@@ -25,5 +25,5 @@ class Evo2Tokenizer(Tokenizer):
     def __init__(self, tokenizer: CharLevelTokenizer):
         self._tokenizer = tokenizer
 
-    def encode(self, text: str, add_special_tokens: bool = True) -> list[int]:  # noqa: ARG002
+    def encode(self, text: str) -> list[int]:
         return list(map(int, self._tokenizer.tokenize(text)))

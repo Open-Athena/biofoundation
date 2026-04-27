@@ -79,11 +79,8 @@ class HFTokenizer(Tokenizer):
     def __init__(self, tokenizer: PreTrainedTokenizerBase):
         self._tokenizer = tokenizer
 
-    def encode(self, text: str, add_special_tokens: bool = True) -> list[int]:
-        return cast(
-            list[int],
-            self._tokenizer.encode(text, add_special_tokens=add_special_tokens),
-        )
+    def encode(self, text: str) -> list[int]:
+        return cast(list[int], self._tokenizer.encode(text))
 
     @property
     def mask_token_id(self) -> int:

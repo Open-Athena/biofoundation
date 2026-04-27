@@ -1690,10 +1690,8 @@ class _StubCharTokenizer(Tokenizer):
         self._bos = bos
         self._eos = eos
 
-    def encode(self, text: str, add_special_tokens: bool = True) -> list[int]:
+    def encode(self, text: str) -> list[int]:
         body = [self._vocab[c.lower()] for c in text]
-        if not add_special_tokens:
-            return body
         out = []
         if self._bos is not None:
             out.append(self._bos)
@@ -1760,7 +1758,7 @@ def test_transform_ll_clm_rejects_non_char_level():
     """A tokenizer that splits a single character into multiple tokens should fail."""
 
     class _BPELikeTokenizer(Tokenizer):
-        def encode(self, text: str, add_special_tokens: bool = True) -> list[int]:
+        def encode(self, text: str) -> list[int]:
             # Pretend each character maps to two tokens — char-level assertion must fire.
             return [ord(c) for c in text for _ in range(2)]
 
@@ -1786,8 +1784,7 @@ def test_transform_ll_clm_honors_disabled_auto_insertion():
 
     class _NoAutoInsertTokenizer(Tokenizer):
         # bos/eos IDs are defined, but encode never inserts them.
-        def encode(self, text: str, add_special_tokens: bool = True) -> list[int]:
-            del add_special_tokens
+        def encode(self, text: str) -> list[int]:
             return [{"a": 10, "c": 11, "g": 12, "t": 13}[c.lower()] for c in text]
 
         @property
@@ -1813,8 +1810,7 @@ def test_transform_ll_clm_byte_level_tokenizer_uppercases():
     """
 
     class _ByteLevelTokenizer(Tokenizer):
-        def encode(self, text: str, add_special_tokens: bool = True) -> list[int]:
-            del add_special_tokens
+        def encode(self, text: str) -> list[int]:
             return list(text.encode("utf-8"))
 
     tokenizer = _ByteLevelTokenizer()
