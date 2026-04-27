@@ -149,6 +149,63 @@ def _clm_seq_logprob(
     return reduce(log_probs.float(), "B L -> B", "sum")
 
 
+def compute_ll_clm(
+    model: CausalLM,
+    input_ids: Int[Tensor, "B L"],
+    is_upper: Int[Tensor, "B L"] | None = None,
+) -> Float[Tensor, "B 2"] | Float[Tensor, "B 4"]:
+    """Per-sequence log-likelihood sums and target counts under a CLM.
+
+    Returns the *raw ingredients* for a dataset-wide token-weighted mean
+    LL — sums and counts, not means. Aggregation happens outside (the
+    caller does ``pred.sum(axis=0)`` then divides), which is what
+    Marin/levanter eval does and what makes the result correct in the
+    presence of all-upper / all-lower sequences.
+
+    The "case of a token" is the loss weight applied when *predicting*
+    that token. ``_logits_to_logprobs`` returns ``[B, L-1]`` where entry
+    ``[b, i]`` is ``log p(input_ids[b, i+1] | input_ids[b, :i+1])``, so
+    the relevant case is the case of the *target* ``input_ids[i+1]``. We
+    therefore slice ``is_upper[:, 1:]`` to align with the L-1 log-probs.
+
+    Output:
+
+    - Without ``is_upper``: ``[B, 2]`` of ``(ll_sum, n)`` per row.
+      ``n = L - 1`` for every row.
+    - With ``is_upper``: ``[B, 4]`` of
+      ``(ll_sum_upper, ll_sum_lower, n_upper, n_lower)`` per row.
+      Invariants: ``ll_sum_upper + ll_sum_lower`` is the total sum,
+      ``n_upper + n_lower = L - 1``. Special-token target positions
+      (``is_upper = False``) fall into the "lower" bucket.
+
+    Aggregation pattern::
+
+        pred = ...                                         # [N, 4]
+        S_u, S_l, n_u, n_l = pred.astype(np.float64).sum(axis=0)
+        LL_all   = (S_u + S_l) / (n_u + n_l)
+        LL_upper = S_u / n_u
+        LL_lower = S_l / n_l
+
+    Per-row sums are fp32; cast to fp64 before summing across rows for a
+    realistic dataset (fp32 accumulates ~0.5 absolute error at totals of
+    ~10^6, which is reachable on a 16k-row eval set).
+    """
+    logits = model(input_ids)
+    logp = _logits_to_logprobs(logits, input_ids).float()  # [B, L-1]
+    L_minus_1 = logp.shape[-1]
+    if is_upper is None:
+        ll_sum = logp.sum(dim=-1)
+        n = torch.full_like(ll_sum, float(L_minus_1))
+        return torch.stack([ll_sum, n], dim=-1)
+    upper_t = is_upper[:, 1:].float()
+    lower_t = 1.0 - upper_t
+    n_upper = upper_t.sum(dim=-1)
+    n_lower = lower_t.sum(dim=-1)
+    ll_sum_upper = (logp * upper_t).sum(dim=-1)
+    ll_sum_lower = (logp * lower_t).sum(dim=-1)
+    return torch.stack([ll_sum_upper, ll_sum_lower, n_upper, n_lower], dim=-1)
+
+
 def compute_euclidean_distance(
     model: EmbeddingModel,
     input_ids: Int[Tensor, "B 2 L"],

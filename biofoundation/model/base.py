@@ -67,11 +67,14 @@ class Tokenizer(ABC):
     """
 
     @abstractmethod
-    def encode(self, text: str) -> list[int]:
+    def encode(self, text: str, add_special_tokens: bool = True) -> list[int]:
         """Encode a single text string to token IDs.
 
         Args:
             text: Input string to encode
+            add_special_tokens: If True (default), prepend/append special
+                tokens (e.g. BOS/EOS) according to the tokenizer's
+                configuration. If False, return only the body tokens.
 
         Returns:
             List of token IDs
@@ -86,3 +89,21 @@ class Tokenizer(ABC):
             AttributeError: If mask token is not supported by this tokenizer
         """
         raise AttributeError(f"Mask token not supported by {self.__class__.__name__}")
+
+    @property
+    def bos_token_id(self) -> int:
+        """Return the BOS token ID.
+
+        Raises:
+            AttributeError: If the tokenizer has no BOS token configured.
+        """
+        raise AttributeError(f"BOS token not supported by {self.__class__.__name__}")
+
+    @property
+    def eos_token_id(self) -> int:
+        """Return the EOS token ID.
+
+        Raises:
+            AttributeError: If the tokenizer has no EOS token configured.
+        """
+        raise AttributeError(f"EOS token not supported by {self.__class__.__name__}")

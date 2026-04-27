@@ -371,6 +371,64 @@ def transform_reflogprob_clm(
     return dict(input_ids=new_input_ids, ref=ref)
 
 
+def transform_ll_clm(
+    example: dict[str, Any],
+    tokenizer: Tokenizer,
+) -> dict[str, Any]:
+    """Prepare an example for CLM sequence-level log-likelihood scoring.
+
+    The raw ``seq`` is uppercased before tokenization, so the model
+    always sees the same byte stream it was trained on. The original
+    case is preserved in ``is_upper`` for the loss-weight breakdown.
+    This matters for case-sensitive (e.g. byte-level) tokenizers such
+    as Evo2's vortex CharLevelTokenizer, where ``'a'`` and ``'A'`` map
+    to different token ids; for case-insensitive DNA tokenizers like
+    Marin's it is a no-op.
+
+    Char-level tokenization with ``add_special_tokens=False``, with BOS/EOS
+    prepended/appended manually using ``tokenizer.bos_token_id`` /
+    ``tokenizer.eos_token_id`` when those are defined. ``is_upper`` is
+    source-aligned: ``is_upper[i]`` describes the character that produced
+    ``input_ids[i]`` (False for special tokens). ``compute_ll_clm`` performs
+    the source->target shift when scoring.
+
+    Returns:
+        input_ids: [L] long tensor.
+        is_upper:  [L] bool tensor — True iff ``input_ids[i]`` came from an
+                   uppercase character of ``example["seq"]``.
+    """
+    seq = example["seq"]
+    body_ids = tokenizer.encode(seq.upper(), add_special_tokens=False)
+    assert len(body_ids) == len(seq), (
+        "Char-level tokenization required for case-breakdown LL "
+        f"(got {len(body_ids)} tokens for {len(seq)} chars)."
+    )
+    char_is_upper = [c.isupper() for c in seq]
+
+    ids: list[int] = []
+    is_upper: list[bool] = []
+
+    try:
+        ids.append(tokenizer.bos_token_id)
+        is_upper.append(False)
+    except AttributeError:
+        pass
+
+    ids.extend(body_ids)
+    is_upper.extend(char_is_upper)
+
+    try:
+        ids.append(tokenizer.eos_token_id)
+        is_upper.append(False)
+    except AttributeError:
+        pass
+
+    return dict(
+        input_ids=torch.tensor(ids, dtype=torch.long),
+        is_upper=torch.tensor(is_upper, dtype=torch.bool),
+    )
+
+
 def read_fasta(
     path: str | Path,
     subset_chroms: set[str] | None = None,

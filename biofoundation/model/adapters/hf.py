@@ -79,9 +79,32 @@ class HFTokenizer(Tokenizer):
     def __init__(self, tokenizer: PreTrainedTokenizerBase):
         self._tokenizer = tokenizer
 
-    def encode(self, text: str) -> list[int]:
-        return cast(list[int], self._tokenizer.encode(text))
+    def encode(self, text: str, add_special_tokens: bool = True) -> list[int]:
+        return cast(
+            list[int],
+            self._tokenizer.encode(text, add_special_tokens=add_special_tokens),
+        )
 
     @property
     def mask_token_id(self) -> int:
         return cast(int, self._tokenizer.mask_token_id)
+
+    @property
+    def bos_token_id(self) -> int:
+        token_id = self._tokenizer.bos_token_id
+        if token_id is None:
+            raise AttributeError(
+                f"Underlying tokenizer {self._tokenizer.__class__.__name__} "
+                "has no BOS token configured."
+            )
+        return cast(int, token_id)
+
+    @property
+    def eos_token_id(self) -> int:
+        token_id = self._tokenizer.eos_token_id
+        if token_id is None:
+            raise AttributeError(
+                f"Underlying tokenizer {self._tokenizer.__class__.__name__} "
+                "has no EOS token configured."
+            )
+        return cast(int, token_id)
