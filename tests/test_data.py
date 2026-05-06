@@ -13,7 +13,9 @@ from biofoundation.data import (
     transform_llr_clm,
     transform_reflogprob_mlm,
     transform_reflogprob_clm,
+    transform_ll_clm,
 )
+from biofoundation.model.adapters.hf import HFTokenizer
 from biofoundation.model.base import Tokenizer
 
 
@@ -1860,3 +1862,152 @@ def test_genomic_set_total_size_after_merge():
     # Overlapping intervals merge to chr1:0-60, size=60
     # Original sizes were 50+20=70, but overlap reduces total to 60
     assert gs.total_size() == 60
+
+
+# --- transform_ll_clm tests -------------------------------------------------
+
+
+class _StubCharTokenizer(Tokenizer):
+    """Char-level Tokenizer stub with configurable BOS/EOS for testing."""
+
+    def __init__(self, bos: int | None = None, eos: int | None = None):
+        # Map A/C/G/T (case-insensitive) to ids 10..13; lowercase too.
+        self._vocab = {"a": 10, "c": 11, "g": 12, "t": 13, "n": 14}
+        self._bos = bos
+        self._eos = eos
+
+    def encode(self, text: str) -> list[int]:
+        body = [self._vocab[c.lower()] for c in text]
+        out = []
+        if self._bos is not None:
+            out.append(self._bos)
+        out.extend(body)
+        if self._eos is not None:
+            out.append(self._eos)
+        return out
+
+    @property
+    def bos_token_id(self) -> int:
+        if self._bos is None:
+            raise AttributeError("no BOS")
+        return self._bos
+
+    @property
+    def eos_token_id(self) -> int:
+        if self._eos is None:
+            raise AttributeError("no EOS")
+        return self._eos
+
+
+def test_transform_ll_clm_no_specials():
+    tokenizer = HFTokenizer(AutoTokenizer.from_pretrained("songlab/tokenizer-dna-mlm"))
+    seq = "ACgtAC"
+    out = transform_ll_clm({"seq": seq}, tokenizer)
+
+    assert out["input_ids"].dtype == torch.long
+    assert out["is_upper"].dtype == torch.bool
+    # tokenizer is char-level with no BOS/EOS, so length == len(seq)
+    assert out["input_ids"].shape == (len(seq),)
+    assert out["is_upper"].shape == (len(seq),)
+    expected_upper = torch.tensor([True, True, False, False, True, True])
+    assert torch.equal(out["is_upper"], expected_upper)
+
+
+@pytest.mark.parametrize(
+    "bos,eos",
+    [(None, None), (101, None), (None, 102), (101, 102)],
+)
+def test_transform_ll_clm_special_tokens(bos, eos):
+    tokenizer = _StubCharTokenizer(bos=bos, eos=eos)
+    seq = "ACgt"
+    out = transform_ll_clm({"seq": seq}, tokenizer)
+
+    body_upper = [True, True, False, False]
+    expected_upper = []
+    if bos is not None:
+        expected_upper.append(False)
+    expected_upper.extend(body_upper)
+    if eos is not None:
+        expected_upper.append(False)
+    assert torch.equal(out["is_upper"], torch.tensor(expected_upper))
+
+    expected_ids = []
+    if bos is not None:
+        expected_ids.append(bos)
+    expected_ids.extend([10, 11, 12, 13])  # A C g t
+    if eos is not None:
+        expected_ids.append(eos)
+    assert out["input_ids"].tolist() == expected_ids
+
+
+def test_transform_ll_clm_rejects_non_char_level():
+    """A tokenizer that splits a single character into multiple tokens should fail."""
+
+    class _BPELikeTokenizer(Tokenizer):
+        def encode(self, text: str) -> list[int]:
+            # Pretend each character maps to two tokens — char-level assertion must fire.
+            return [ord(c) for c in text for _ in range(2)]
+
+    with pytest.raises(AssertionError, match="Char-level"):
+        transform_ll_clm({"seq": "ACGT"}, _BPELikeTokenizer())
+
+
+def test_transform_ll_clm_all_lower_and_all_upper():
+    tokenizer = HFTokenizer(AutoTokenizer.from_pretrained("songlab/tokenizer-dna-mlm"))
+    out_upper = transform_ll_clm({"seq": "ACGTAC"}, tokenizer)
+    out_lower = transform_ll_clm({"seq": "acgtac"}, tokenizer)
+    assert out_upper["is_upper"].all()
+    assert (~out_lower["is_upper"]).all()
+    # Tokenizer is case-insensitive, so input_ids should match.
+    assert torch.equal(out_upper["input_ids"], out_lower["input_ids"])
+
+
+def test_transform_ll_clm_honors_disabled_auto_insertion():
+    """A tokenizer with bos/eos defined but auto-insertion disabled (a
+    common HF setup, e.g. GPT-2-style) must not gain extra special-token
+    targets. We honor whatever ``add_special_tokens=True`` returns; if
+    the tokenizer chose not to insert, neither do we."""
+
+    class _NoAutoInsertTokenizer(Tokenizer):
+        # bos/eos IDs are defined, but encode never inserts them.
+        def encode(self, text: str) -> list[int]:
+            return [{"a": 10, "c": 11, "g": 12, "t": 13}[c.lower()] for c in text]
+
+        @property
+        def bos_token_id(self) -> int:
+            return 99
+
+        @property
+        def eos_token_id(self) -> int:
+            return 98
+
+    out = transform_ll_clm({"seq": "ACgt"}, _NoAutoInsertTokenizer())
+    # No specials in the encoding → no specials in input_ids; is_upper is
+    # purely the per-char case. Crucially, n_total = len(seq), not len(seq)+2.
+    assert out["input_ids"].tolist() == [10, 11, 12, 13]
+    assert out["is_upper"].tolist() == [True, True, False, False]
+
+
+def test_transform_ll_clm_byte_level_tokenizer_uppercases():
+    """Case-sensitive byte-level tokenizer (e.g. Evo2's vortex
+    CharLevelTokenizer) must still produce correct, identical input_ids
+    for upper / lower / mixed sequences — transform_ll_clm uppercases
+    before tokenizing so the model only ever sees uppercase bytes.
+    """
+
+    class _ByteLevelTokenizer(Tokenizer):
+        def encode(self, text: str) -> list[int]:
+            return list(text.encode("utf-8"))
+
+    tokenizer = _ByteLevelTokenizer()
+    seqs = ["ACGTAC", "acgtac", "AcGtAc"]
+    outs = [transform_ll_clm({"seq": s}, tokenizer) for s in seqs]
+    # All three sequences must produce identical input_ids — that's what
+    # makes Evo2 happy. The is_upper masks differ as expected.
+    for o in outs[1:]:
+        assert torch.equal(o["input_ids"], outs[0]["input_ids"])
+    # Sanity: input_ids correspond to ASCII codes for uppercase ACGTAC.
+    assert outs[0]["input_ids"].tolist() == [65, 67, 71, 84, 65, 67]
+    assert outs[0]["is_upper"].tolist() == [True, True, True, True, True, True]
+    assert outs[1]["is_upper"].tolist() == [False, False, False, False, False, False]
+    assert outs[2]["is_upper"].tolist() == [True, False, True, False, True, False]

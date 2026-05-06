@@ -409,6 +409,69 @@ def transform_reflogprob_clm(
     return dict(input_ids=new_input_ids, ref=ref)
 
 
+def transform_ll_clm(
+    example: dict[str, Any],
+    tokenizer: Tokenizer,
+) -> dict[str, Any]:
+    """Prepare an example for CLM sequence-level log-likelihood scoring.
+
+    The raw ``seq`` is uppercased before tokenization, so the tokenizer
+    always sees the case it was trained on. The original case is
+    preserved in ``is_upper`` for the loss-weight breakdown. This matters
+    for case-sensitive (e.g. byte-level) tokenizers such as Evo2's vortex
+    CharLevelTokenizer, where ``'a'`` and ``'A'`` map to different token
+    ids; for case-insensitive DNA tokenizers like Marin's it is a no-op.
+
+    BOS/EOS handling follows the tokenizer's own policy — we don't
+    second-guess it. We detect at most one BOS at the start and one EOS
+    at the end (if the tokenizer's ``bos_token_id`` / ``eos_token_id``
+    matches there) and mark those positions ``is_upper=False``.
+    ``is_upper`` is source-aligned: ``is_upper[i]`` describes the
+    character that produced ``input_ids[i]`` (False for special tokens).
+    ``compute_ll_clm`` performs the source->target shift when scoring.
+
+    Special-token *targets* (e.g. EOS, when the tokenizer auto-appends
+    one) end up with ``is_upper=False`` and so contribute to
+    ``ll_sum_lower`` in ``compute_ll_clm`` — a ~1-token bias on
+    LL(non-functional) for EOS-trained models, worth knowing if you
+    compare absolute LL(non-functional) values across models with vs.
+    without EOS.
+
+    Returns:
+        input_ids: [L] long tensor.
+        is_upper:  [L] bool tensor — True iff ``input_ids[i]`` came from an
+                   uppercase character of ``example["seq"]``.
+    """
+    seq = example["seq"]
+    full_ids = tokenizer.encode(seq.upper())
+
+    try:
+        bos_id: int | None = tokenizer.bos_token_id
+    except AttributeError:
+        bos_id = None
+    try:
+        eos_id: int | None = tokenizer.eos_token_id
+    except AttributeError:
+        eos_id = None
+
+    n_prefix = 1 if bos_id is not None and full_ids[:1] == [bos_id] else 0
+    n_suffix = 1 if eos_id is not None and full_ids[-1:] == [eos_id] else 0
+    body_len = len(full_ids) - n_prefix - n_suffix
+    assert body_len == len(seq), (
+        "Char-level tokenization required for case-breakdown LL "
+        f"(body={body_len} tokens vs {len(seq)} chars; "
+        "either non-char-level or unexpected special tokens)."
+    )
+
+    is_upper = (
+        [False] * n_prefix + [c.isupper() for c in seq] + [False] * n_suffix
+    )
+    return dict(
+        input_ids=torch.tensor(full_ids, dtype=torch.long),
+        is_upper=torch.tensor(is_upper, dtype=torch.bool),
+    )
+
+
 def read_fasta(
     path: str | Path,
     subset_chroms: set[str] | None = None,
