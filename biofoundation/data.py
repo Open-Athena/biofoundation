@@ -276,22 +276,18 @@ def _get_variant_window(
 
 @functools.cache
 def _get_token_prefix_len(tokenizer: Tokenizer) -> int:
-    """Number of special tokens prepended before the first DNA token.
+    """Number of tokens prepended before the DNA payload.
 
-    Inferred by comparing ``encode("A")`` to ``encode("AA")``: both share the
-    BOS prefix and EOS suffix; the second has one extra DNA token in between.
-    The first index where they diverge is one past the prefix.
-    Assumes per-character DNA tokenization.
+    Mirrors the n_prefix detection in ``transform_ll_clm``: query the
+    tokenizer for ``bos_token_id`` and verify it actually appears at the
+    start of an encoded sequence (some tokenizers define the ID but don't
+    auto-insert).
     """
-    e1 = tokenizer.encode("A")
-    e2 = tokenizer.encode("AA")
-    assert len(e2) == len(e1) + 1, (
-        f"tokenizer is not per-character: encode('A')={e1}, encode('AA')={e2}"
-    )
-    for i in range(len(e1)):
-        if e1[i] != e2[i]:
-            return i - 1
-    return len(e1) - 1
+    try:
+        bos_id = tokenizer.bos_token_id
+    except AttributeError:
+        return 0
+    return 1 if tokenizer.encode("A")[:1] == [bos_id] else 0
 
 
 @functools.cache

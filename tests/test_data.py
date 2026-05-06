@@ -42,6 +42,18 @@ class _SpecialTokensTokenizer(Tokenizer):
     def mask_token_id(self):
         return self._base.mask_token_id
 
+    @property
+    def bos_token_id(self) -> int:
+        if self._bos is None:
+            raise AttributeError("no BOS configured")
+        return self._bos
+
+    @property
+    def eos_token_id(self) -> int:
+        if self._eos is None:
+            raise AttributeError("no EOS configured")
+        return self._eos
+
 
 _BOS_ID = 100
 _EOS_ID = 101
