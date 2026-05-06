@@ -8,6 +8,7 @@ from transformers import AutoTokenizer
 from biofoundation.data import (
     Genome,
     GenomicSet,
+    _get_special_token_counts,
     transform_llr_mlm,
     transform_llr_clm,
     transform_reflogprob_mlm,
@@ -16,6 +17,46 @@ from biofoundation.data import (
 )
 from biofoundation.model.adapters.hf import HFTokenizer
 from biofoundation.model.base import Tokenizer
+
+
+class _SpecialTokensTokenizer(Tokenizer):
+    """Wrap an HF tokenizer to optionally prepend BOS / append EOS.
+
+    Uses synthetic IDs that don't collide with real DNA tokens.
+    """
+
+    def __init__(self, base, *, bos_id=None, eos_id=None):
+        self._base = base
+        self._bos = bos_id
+        self._eos = eos_id
+
+    def encode(self, text):
+        ids = list(self._base.encode(text))
+        if self._bos is not None:
+            ids = [self._bos] + ids
+        if self._eos is not None:
+            ids = ids + [self._eos]
+        return ids
+
+    @property
+    def mask_token_id(self):
+        return self._base.mask_token_id
+
+    @property
+    def bos_token_id(self) -> int:
+        if self._bos is None:
+            raise AttributeError("no BOS configured")
+        return self._bos
+
+    @property
+    def eos_token_id(self) -> int:
+        if self._eos is None:
+            raise AttributeError("no EOS configured")
+        return self._eos
+
+
+_BOS_ID = 100
+_EOS_ID = 101
 
 
 def _write_test_fasta(tmp_path):
@@ -258,6 +299,163 @@ def test_transform_llr_clm_different_window_sizes(tmp_path):
 
         # Check first 8 tokens match as asserted in the actual code
         assert (result["input_ids"][0, :8] == result["input_ids"][1, :8]).all()
+
+
+@pytest.mark.parametrize(
+    "bos_id,eos_id,counts",
+    [
+        (None, None, (0, 0)),
+        (_BOS_ID, None, (1, 0)),
+        (None, _EOS_ID, (0, 1)),
+        (_BOS_ID, _EOS_ID, (1, 1)),
+    ],
+)
+def test_get_special_token_counts(bos_id, eos_id, counts):
+    base = AutoTokenizer.from_pretrained("songlab/tokenizer-dna-mlm")
+    tokenizer = _SpecialTokensTokenizer(base, bos_id=bos_id, eos_id=eos_id)
+    assert _get_special_token_counts(tokenizer) == counts
+
+
+@pytest.mark.parametrize(
+    "tokenizer_name,counts",
+    [
+        ("songlab/tokenizer-dna-mlm", (0, 0)),
+        ("songlab/tokenizer-dna-clm", (0, 0)),
+        ("bolinas-dna/tokenizer-char-bos", (1, 0)),
+        ("bolinas-dna/tokenizer-char-bos-eos", (1, 1)),
+    ],
+)
+def test_get_special_token_counts_real_tokenizers(tokenizer_name, counts):
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+    assert _get_special_token_counts(tokenizer) == counts
+
+
+def test_transform_llr_clm_exp136_recipe(tmp_path):
+    """Regression for issue #19: window_size=255 + bolinas BOS tokenizer."""
+    tokenizer = AutoTokenizer.from_pretrained("bolinas-dna/tokenizer-char-bos")
+    fasta_path = tmp_path / "g.fa"
+    fasta_path.write_text(">chr1\n" + ("ACGT" * 100) + "\n")
+    genome = Genome(fasta_path)
+    example = {"chrom": "chr1", "pos": 200, "ref": "T", "alt": "G"}
+
+    result = transform_llr_clm(example, tokenizer, genome, window_size=255)
+
+    assert result["input_ids"].shape == (2, 256)
+    diff_mask = result["input_ids"][0] != result["input_ids"][1]
+    assert diff_mask.sum().item() == 1
+    assert diff_mask.nonzero()[0].item() == 128
+
+
+def test_transform_llr_clm_window_size_one(tmp_path):
+    """Smallest window: just the variant base itself."""
+    tokenizer = AutoTokenizer.from_pretrained("songlab/tokenizer-dna-mlm")
+    genome = Genome(_write_test_fasta(tmp_path))
+    example = {"chrom": "chr1", "pos": 6, "ref": "C", "alt": "A"}
+
+    result = transform_llr_clm(example, tokenizer, genome, window_size=1)
+
+    assert result["input_ids"].shape == (2, 1)
+    assert result["input_ids"][0, 0] != result["input_ids"][1, 0]
+
+
+@pytest.mark.parametrize(
+    "bos_id,eos_id",
+    [(None, None), (_BOS_ID, None), (None, _EOS_ID), (_BOS_ID, _EOS_ID)],
+)
+@pytest.mark.parametrize("window_size", [15, 16])
+def test_transform_llr_clm_handles_bos_eos(tmp_path, bos_id, eos_id, window_size):
+    base = AutoTokenizer.from_pretrained("songlab/tokenizer-dna-mlm")
+    tokenizer = _SpecialTokensTokenizer(base, bos_id=bos_id, eos_id=eos_id)
+    genome = Genome(_write_test_fasta(tmp_path))
+    example = {"chrom": "chr1", "pos": 6, "ref": "C", "alt": "A"}
+
+    result = transform_llr_clm(example, tokenizer, genome, window_size)
+
+    has_bos = bos_id is not None
+    has_eos = eos_id is not None
+    expected_len = window_size + int(has_bos) + int(has_eos)
+    assert result["input_ids"].shape == (2, expected_len)
+    diff_mask = result["input_ids"][0] != result["input_ids"][1]
+    assert diff_mask.sum().item() == 1
+    assert diff_mask.nonzero()[0].item() == window_size // 2 + int(has_bos)
+
+
+@pytest.mark.parametrize(
+    "bos_id,eos_id",
+    [(None, None), (_BOS_ID, None), (None, _EOS_ID), (_BOS_ID, _EOS_ID)],
+)
+@pytest.mark.parametrize("window_size", [5, 6])
+def test_transform_llr_mlm_handles_bos_eos(tmp_path, bos_id, eos_id, window_size):
+    base = AutoTokenizer.from_pretrained("songlab/tokenizer-dna-mlm")
+    tokenizer = _SpecialTokensTokenizer(base, bos_id=bos_id, eos_id=eos_id)
+    genome = Genome(_write_test_fasta(tmp_path))
+    example = {"chrom": "chr1", "pos": 5, "ref": "A", "alt": "G"}
+
+    result = transform_llr_mlm(example, tokenizer, genome, window_size)
+
+    has_bos = bos_id is not None
+    has_eos = eos_id is not None
+    expected_len = window_size + int(has_bos) + int(has_eos)
+    assert result["input_ids"].shape[0] == expected_len
+    assert result["pos"] == window_size // 2 + int(has_bos)
+    assert result["input_ids"][result["pos"]].item() == base.mask_token_id
+    assert result["ref"] == base.encode(example["ref"])[0]
+    assert result["alt"] == base.encode(example["alt"])[0]
+    if has_bos:
+        assert result["ref"] != bos_id
+        assert result["alt"] != bos_id
+
+
+@pytest.mark.parametrize(
+    "bos_id,eos_id",
+    [(None, None), (_BOS_ID, None), (None, _EOS_ID), (_BOS_ID, _EOS_ID)],
+)
+def test_transform_reflogprob_mlm_handles_bos_eos(bos_id, eos_id):
+    base = AutoTokenizer.from_pretrained("songlab/tokenizer-dna-mlm")
+    tokenizer = _SpecialTokensTokenizer(base, bos_id=bos_id, eos_id=eos_id)
+    pos = 3
+    example = {"seq": "ATCGATCG", "pos": pos}
+
+    result = transform_reflogprob_mlm(example, tokenizer)
+
+    has_bos = bos_id is not None
+    has_eos = eos_id is not None
+    expected_len = len(example["seq"]) + int(has_bos) + int(has_eos)
+    assert result["input_ids"].shape[0] == expected_len
+    assert result["pos"] == pos + int(has_bos)
+    assert result["input_ids"][result["pos"]].item() == base.mask_token_id
+    assert result["ref"] == base.encode(example["seq"][pos])[0]
+    if has_bos:
+        assert result["ref"] != bos_id
+
+
+@pytest.mark.parametrize(
+    "bos_id,eos_id",
+    [(None, None), (_BOS_ID, None), (None, _EOS_ID), (_BOS_ID, _EOS_ID)],
+)
+def test_transform_reflogprob_clm_handles_bos_eos(bos_id, eos_id):
+    base = AutoTokenizer.from_pretrained("songlab/tokenizer-dna-mlm")
+    tokenizer = _SpecialTokensTokenizer(base, bos_id=bos_id, eos_id=eos_id)
+    pos = 3
+    example = {"seq": "ATCGATCG", "pos": pos}
+
+    result = transform_reflogprob_clm(example, tokenizer)
+
+    has_bos = bos_id is not None
+    has_eos = eos_id is not None
+    expected_len = len(example["seq"]) + int(has_bos) + int(has_eos)
+    input_ids = result["input_ids"]
+    assert input_ids.shape == (4, expected_len)
+
+    tokenized_pos = pos + int(has_bos)
+    nucleotides = ["A", "C", "G", "T"]
+    for i, nuc in enumerate(nucleotides):
+        assert input_ids[i, tokenized_pos].item() == base.encode(nuc)[0]
+        for j in range(expected_len):
+            if j == tokenized_pos:
+                continue
+            assert input_ids[i, j].item() == input_ids[0, j].item()
+    assert nucleotides[result["ref"]] == example["seq"][pos]
 
 
 def test_transform_reflogprob_clm_basic_functionality():
