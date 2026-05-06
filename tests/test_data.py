@@ -302,6 +302,67 @@ def test_get_token_prefix_len(bos_id, eos_id, prefix_len):
     assert _get_token_prefix_len(tokenizer) == prefix_len
 
 
+@pytest.mark.parametrize(
+    "tokenizer_name,prefix_len",
+    [
+        ("songlab/tokenizer-dna-mlm", 0),
+        ("songlab/tokenizer-dna-clm", 0),
+        ("bolinas-dna/tokenizer-char-bos", 1),
+        ("bolinas-dna/tokenizer-char-bos-eos", 1),
+    ],
+)
+def test_get_token_prefix_len_real_tokenizers(tokenizer_name, prefix_len):
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+    assert _get_token_prefix_len(tokenizer) == prefix_len
+
+
+@pytest.mark.parametrize(
+    "tokenizer_name",
+    [
+        "songlab/tokenizer-dna-mlm",
+        "songlab/tokenizer-dna-clm",
+        "bolinas-dna/tokenizer-char-bos",
+        "bolinas-dna/tokenizer-char-bos-eos",
+    ],
+)
+@pytest.mark.parametrize("window_size", [15, 16])
+def test_transform_llr_clm_real_tokenizers(tmp_path, tokenizer_name, window_size):
+    """End-to-end smoke for transform_llr_clm across the four real DNA tokenizers."""
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+    genome = Genome(_write_test_fasta(tmp_path))
+    example = {"chrom": "chr1", "pos": 6, "ref": "C", "alt": "A"}
+
+    result = transform_llr_clm(example, tokenizer, genome, window_size)
+
+    prefix_len = _get_token_prefix_len(tokenizer)
+    # tokenized length = window_size + prefix_tokens + suffix_tokens
+    tokenized_len = len(tokenizer.encode("A" * window_size))
+    assert result["input_ids"].shape == (2, tokenized_len)
+    diff_mask = result["input_ids"][0] != result["input_ids"][1]
+    assert diff_mask.sum().item() == 1
+    # variant lands at DNA index window_size // 2, shifted by the BOS prefix
+    assert diff_mask.nonzero()[0].item() == window_size // 2 + prefix_len
+
+
+def test_transform_llr_clm_exp136_recipe(tmp_path):
+    """The exp136 scenario from issue #19: window_size=255 + bolinas BOS tokenizer
+    -> 256 total tokens, variant lands at index 128."""
+    tokenizer = AutoTokenizer.from_pretrained("bolinas-dna/tokenizer-char-bos")
+    # FASTA long enough to give the variant 127bp of left and 128bp of right flank
+    fasta_path = tmp_path / "g.fa"
+    fasta_path.write_text(">chr1\n" + ("ACGT" * 100) + "\n")
+    genome = Genome(fasta_path)
+    # pos=200 (1-based) -> 0-based 199 -> seq[199] = 'T' (since "ACGT"[199 % 4] = 'T')
+    example = {"chrom": "chr1", "pos": 200, "ref": "T", "alt": "G"}
+
+    result = transform_llr_clm(example, tokenizer, genome, window_size=255)
+
+    assert result["input_ids"].shape == (2, 256)  # 255 DNA + BOS
+    diff_mask = result["input_ids"][0] != result["input_ids"][1]
+    assert diff_mask.sum().item() == 1
+    assert diff_mask.nonzero()[0].item() == 128  # 127 (DNA pos) + 1 (BOS)
+
+
 def test_transform_llr_clm_odd_window_size(tmp_path):
     """Odd window_size should put the extra base on the right side."""
     tokenizer = AutoTokenizer.from_pretrained("songlab/tokenizer-dna-mlm")
