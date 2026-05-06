@@ -363,11 +363,11 @@ def test_transform_llr_clm_handles_bos_eos(tmp_path, bos_id, eos_id, window_size
     "bos_id,eos_id",
     [(None, None), (_BOS_ID, None), (None, _EOS_ID), (_BOS_ID, _EOS_ID)],
 )
-def test_transform_llr_mlm_handles_bos_eos(tmp_path, bos_id, eos_id):
+@pytest.mark.parametrize("window_size", [5, 6])
+def test_transform_llr_mlm_handles_bos_eos(tmp_path, bos_id, eos_id, window_size):
     base = AutoTokenizer.from_pretrained("songlab/tokenizer-dna-mlm")
     tokenizer = _SpecialTokensTokenizer(base, bos_id=bos_id, eos_id=eos_id)
     genome = Genome(_write_test_fasta(tmp_path))
-    window_size = 6
     example = {"chrom": "chr1", "pos": 5, "ref": "A", "alt": "G"}
 
     result = transform_llr_mlm(example, tokenizer, genome, window_size)
