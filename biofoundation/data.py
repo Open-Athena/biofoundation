@@ -250,11 +250,11 @@ def _get_variant_window(
 ) -> tuple[str, int]:
     """Extract a window around a variant position from the genome.
 
-    The variant's REF base sits at position ``window_size // 2`` (0-indexed).
-    Left flank is ``window_size // 2`` bp; right side is
-    ``window_size - window_size // 2`` bp (1 REF + remainder). Even
-    ``window_size`` is symmetric; odd ``window_size`` puts the extra base on
-    the right (e.g. 127 + 128 for ``window_size=255``).
+    The window splits as ``left_flank | REF | right_flank``, with
+    ``left_flank = window_size // 2`` bp and
+    ``right_flank = window_size - window_size // 2 - 1`` bp. Odd
+    ``window_size`` is symmetric (e.g. 127 + 1 + 127 = 255); even
+    ``window_size`` puts the extra base in the left flank (e.g. 2 + 1 + 1 = 4).
 
     Args:
         example: Dictionary containing 'chrom', 'pos', 'ref' keys
@@ -265,12 +265,11 @@ def _get_variant_window(
         Tuple of (sequence, position_within_window)
     """
     center_index = example["pos"] - 1  # 1-based to 0-based
-    left_size = window_size // 2
-    start = center_index - left_size
+    pos = window_size // 2
+    start = center_index - pos
     end = start + window_size
     seq = genome(example["chrom"], start, end).upper()
     assert len(seq) == window_size
-    pos = left_size
     assert seq[pos] == example["ref"]
     return seq, pos
 
@@ -463,9 +462,7 @@ def transform_ll_clm(
         "either non-char-level or unexpected special tokens)."
     )
 
-    is_upper = (
-        [False] * n_prefix + [c.isupper() for c in seq] + [False] * n_suffix
-    )
+    is_upper = [False] * n_prefix + [c.isupper() for c in seq] + [False] * n_suffix
     return dict(
         input_ids=torch.tensor(full_ids, dtype=torch.long),
         is_upper=torch.tensor(is_upper, dtype=torch.bool),
