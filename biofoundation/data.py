@@ -1,3 +1,4 @@
+import functools
 import gzip
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -274,11 +275,13 @@ def _get_variant_window(
     return seq, pos
 
 
+@functools.cache
 def _get_token_prefix_len(tokenizer: Tokenizer) -> int:
     """Number of special tokens prepended before the first DNA token.
 
     Inferred by comparing ``encode("A")`` to ``encode("AA")``: both share the
     BOS prefix and EOS suffix; the second has one extra DNA token in between.
+    The first index where they diverge is one past the prefix.
     Assumes per-character DNA tokenization.
     """
     e1 = tokenizer.encode("A")
@@ -290,6 +293,13 @@ def _get_token_prefix_len(tokenizer: Tokenizer) -> int:
         if e1[i] != e2[i]:
             return i - 1
     return len(e1) - 1
+
+
+@functools.cache
+def _get_nucleotide_token_ids(tokenizer: Tokenizer) -> dict[str, int]:
+    """Token IDs for the 4 DNA nucleotides under this tokenizer."""
+    prefix_len = _get_token_prefix_len(tokenizer)
+    return {nuc: tokenizer.encode(nuc)[prefix_len] for nuc in NUCLEOTIDES}
 
 
 def transform_llr_mlm(
@@ -308,14 +318,14 @@ def transform_llr_mlm(
     """
     seq, pos = _get_variant_window(example, genome, window_size)
     input_ids = torch.tensor(tokenizer.encode(seq))
-    prefix_len = _get_token_prefix_len(tokenizer)
-    tokenized_pos = pos + prefix_len
+    nuc_ids = _get_nucleotide_token_ids(tokenizer)
+    tokenized_pos = pos + _get_token_prefix_len(tokenizer)
     input_ids[tokenized_pos] = tokenizer.mask_token_id
     return dict(
         input_ids=input_ids,
         pos=tokenized_pos,
-        ref=tokenizer.encode(example["ref"])[prefix_len],
-        alt=tokenizer.encode(example["alt"])[prefix_len],
+        ref=nuc_ids[example["ref"]],
+        alt=nuc_ids[example["alt"]],
     )
 
 
@@ -390,12 +400,11 @@ def transform_reflogprob_clm(
     pos = example["pos"]
     assert example["seq"][pos] in NUCLEOTIDES
     input_ids = torch.tensor(tokenizer.encode(example["seq"]))
-    prefix_len = _get_token_prefix_len(tokenizer)
-    tokenized_pos = pos + prefix_len
-    # Create 4 copies of the input sequence
+    nuc_ids = _get_nucleotide_token_ids(tokenizer)
+    tokenized_pos = pos + _get_token_prefix_len(tokenizer)
     new_input_ids = input_ids.unsqueeze(0).repeat(len(NUCLEOTIDES), 1)
     for i, nuc in enumerate(NUCLEOTIDES):
-        new_input_ids[i, tokenized_pos] = tokenizer.encode(nuc)[prefix_len]
+        new_input_ids[i, tokenized_pos] = nuc_ids[nuc]
     ref = NUCLEOTIDES.index(example["seq"][pos])
     return dict(input_ids=new_input_ids, ref=ref)
 

@@ -316,71 +316,20 @@ def test_get_token_prefix_len_real_tokenizers(tokenizer_name, prefix_len):
     assert _get_token_prefix_len(tokenizer) == prefix_len
 
 
-@pytest.mark.parametrize(
-    "tokenizer_name",
-    [
-        "songlab/tokenizer-dna-mlm",
-        "songlab/tokenizer-dna-clm",
-        "bolinas-dna/tokenizer-char-bos",
-        "bolinas-dna/tokenizer-char-bos-eos",
-    ],
-)
-@pytest.mark.parametrize("window_size", [15, 16])
-def test_transform_llr_clm_real_tokenizers(tmp_path, tokenizer_name, window_size):
-    """End-to-end smoke for transform_llr_clm across the four real DNA tokenizers."""
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
-    genome = Genome(_write_test_fasta(tmp_path))
-    example = {"chrom": "chr1", "pos": 6, "ref": "C", "alt": "A"}
-
-    result = transform_llr_clm(example, tokenizer, genome, window_size)
-
-    prefix_len = _get_token_prefix_len(tokenizer)
-    # tokenized length = window_size + prefix_tokens + suffix_tokens
-    tokenized_len = len(tokenizer.encode("A" * window_size))
-    assert result["input_ids"].shape == (2, tokenized_len)
-    diff_mask = result["input_ids"][0] != result["input_ids"][1]
-    assert diff_mask.sum().item() == 1
-    # variant lands at DNA index window_size // 2, shifted by the BOS prefix
-    assert diff_mask.nonzero()[0].item() == window_size // 2 + prefix_len
-
-
 def test_transform_llr_clm_exp136_recipe(tmp_path):
-    """The exp136 scenario from issue #19: window_size=255 + bolinas BOS tokenizer
-    -> 256 total tokens, variant lands at index 128."""
+    """Regression for issue #19: window_size=255 + bolinas BOS tokenizer."""
     tokenizer = AutoTokenizer.from_pretrained("bolinas-dna/tokenizer-char-bos")
-    # FASTA long enough to give the variant 127bp of left and 128bp of right flank
     fasta_path = tmp_path / "g.fa"
     fasta_path.write_text(">chr1\n" + ("ACGT" * 100) + "\n")
     genome = Genome(fasta_path)
-    # pos=200 (1-based) -> 0-based 199 -> seq[199] = 'T' (since "ACGT"[199 % 4] = 'T')
     example = {"chrom": "chr1", "pos": 200, "ref": "T", "alt": "G"}
 
     result = transform_llr_clm(example, tokenizer, genome, window_size=255)
 
-    assert result["input_ids"].shape == (2, 256)  # 255 DNA + BOS
+    assert result["input_ids"].shape == (2, 256)
     diff_mask = result["input_ids"][0] != result["input_ids"][1]
     assert diff_mask.sum().item() == 1
-    assert diff_mask.nonzero()[0].item() == 128  # 127 (DNA pos) + 1 (BOS)
-
-
-def test_transform_llr_clm_odd_window_size(tmp_path):
-    """Odd window_size should put the extra base on the right side."""
-    tokenizer = AutoTokenizer.from_pretrained("songlab/tokenizer-dna-mlm")
-    genome = Genome(_write_test_fasta(tmp_path))
-    window_size = 15
-    example = {"chrom": "chr1", "pos": 6, "ref": "C", "alt": "A"}
-
-    result = transform_llr_clm(example, tokenizer, genome, window_size)
-
-    assert result["input_ids"].shape == (2, window_size)
-    # Variant sits at window_size // 2 == 7
-    diff_mask = result["input_ids"][0] != result["input_ids"][1]
-    assert diff_mask.sum().item() == 1
-    assert diff_mask.nonzero()[0].item() == window_size // 2
-    assert (
-        result["input_ids"][0, : window_size // 2]
-        == result["input_ids"][1, : window_size // 2]
-    ).all()
+    assert diff_mask.nonzero()[0].item() == 128
 
 
 def test_transform_llr_clm_window_size_one(tmp_path):
@@ -401,8 +350,6 @@ def test_transform_llr_clm_window_size_one(tmp_path):
 )
 @pytest.mark.parametrize("window_size", [15, 16])
 def test_transform_llr_clm_handles_bos_eos(tmp_path, bos_id, eos_id, window_size):
-    """LLR-CLM should produce ref/alt stacks of equal length differing at exactly one position
-    across all (window_size, BOS, EOS) combinations."""
     base = AutoTokenizer.from_pretrained("songlab/tokenizer-dna-mlm")
     tokenizer = _SpecialTokensTokenizer(base, bos_id=bos_id, eos_id=eos_id)
     genome = Genome(_write_test_fasta(tmp_path))
@@ -416,7 +363,6 @@ def test_transform_llr_clm_handles_bos_eos(tmp_path, bos_id, eos_id, window_size
     assert result["input_ids"].shape == (2, expected_len)
     diff_mask = result["input_ids"][0] != result["input_ids"][1]
     assert diff_mask.sum().item() == 1
-    # variant lands at DNA position window_size // 2, shifted by BOS prefix
     assert diff_mask.nonzero()[0].item() == window_size // 2 + int(has_bos)
 
 
@@ -437,11 +383,8 @@ def test_transform_llr_mlm_handles_bos_eos(tmp_path, bos_id, eos_id, window_size
     has_eos = eos_id is not None
     expected_len = window_size + int(has_bos) + int(has_eos)
     assert result["input_ids"].shape[0] == expected_len
-    # pos returned is the tokenized position (DNA pos shifted by BOS prefix)
     assert result["pos"] == window_size // 2 + int(has_bos)
-    # masked at the tokenized position
     assert result["input_ids"][result["pos"]].item() == base.mask_token_id
-    # ref/alt are the actual nucleotide tokens, not BOS
     assert result["ref"] == base.encode(example["ref"])[0]
     assert result["alt"] == base.encode(example["alt"])[0]
     if has_bos:
@@ -465,11 +408,8 @@ def test_transform_reflogprob_mlm_handles_bos_eos(bos_id, eos_id):
     has_eos = eos_id is not None
     expected_len = len(example["seq"]) + int(has_bos) + int(has_eos)
     assert result["input_ids"].shape[0] == expected_len
-    # tokenized position = DNA pos + BOS prefix
     assert result["pos"] == pos + int(has_bos)
-    # masked at the tokenized position
     assert result["input_ids"][result["pos"]].item() == base.mask_token_id
-    # ref is the original nucleotide token, not BOS
     assert result["ref"] == base.encode(example["seq"][pos])[0]
     if has_bos:
         assert result["ref"] != bos_id
@@ -496,14 +436,11 @@ def test_transform_reflogprob_clm_handles_bos_eos(bos_id, eos_id):
     tokenized_pos = pos + int(has_bos)
     nucleotides = ["A", "C", "G", "T"]
     for i, nuc in enumerate(nucleotides):
-        # each row has the corresponding nucleotide token at the tokenized variant position
         assert input_ids[i, tokenized_pos].item() == base.encode(nuc)[0]
-        # everywhere else, the 4 rows are identical
         for j in range(expected_len):
             if j == tokenized_pos:
                 continue
             assert input_ids[i, j].item() == input_ids[0, j].item()
-    # ref maps the original nucleotide to its index in NUCLEOTIDES
     assert nucleotides[result["ref"]] == example["seq"][pos]
 
 
