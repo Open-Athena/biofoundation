@@ -8,7 +8,7 @@ from transformers import AutoTokenizer
 from biofoundation.data import (
     Genome,
     GenomicSet,
-    _get_token_prefix_len,
+    _get_special_token_counts,
     transform_llr_mlm,
     transform_llr_clm,
     transform_reflogprob_mlm,
@@ -302,32 +302,32 @@ def test_transform_llr_clm_different_window_sizes(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "bos_id,eos_id,prefix_len",
+    "bos_id,eos_id,counts",
     [
-        (None, None, 0),
-        (_BOS_ID, None, 1),
-        (None, _EOS_ID, 0),
-        (_BOS_ID, _EOS_ID, 1),
+        (None, None, (0, 0)),
+        (_BOS_ID, None, (1, 0)),
+        (None, _EOS_ID, (0, 1)),
+        (_BOS_ID, _EOS_ID, (1, 1)),
     ],
 )
-def test_get_token_prefix_len(bos_id, eos_id, prefix_len):
+def test_get_special_token_counts(bos_id, eos_id, counts):
     base = AutoTokenizer.from_pretrained("songlab/tokenizer-dna-mlm")
     tokenizer = _SpecialTokensTokenizer(base, bos_id=bos_id, eos_id=eos_id)
-    assert _get_token_prefix_len(tokenizer) == prefix_len
+    assert _get_special_token_counts(tokenizer) == counts
 
 
 @pytest.mark.parametrize(
-    "tokenizer_name,prefix_len",
+    "tokenizer_name,counts",
     [
-        ("songlab/tokenizer-dna-mlm", 0),
-        ("songlab/tokenizer-dna-clm", 0),
-        ("bolinas-dna/tokenizer-char-bos", 1),
-        ("bolinas-dna/tokenizer-char-bos-eos", 1),
+        ("songlab/tokenizer-dna-mlm", (0, 0)),
+        ("songlab/tokenizer-dna-clm", (0, 0)),
+        ("bolinas-dna/tokenizer-char-bos", (1, 0)),
+        ("bolinas-dna/tokenizer-char-bos-eos", (1, 1)),
     ],
 )
-def test_get_token_prefix_len_real_tokenizers(tokenizer_name, prefix_len):
+def test_get_special_token_counts_real_tokenizers(tokenizer_name, counts):
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
-    assert _get_token_prefix_len(tokenizer) == prefix_len
+    assert _get_special_token_counts(tokenizer) == counts
 
 
 def test_transform_llr_clm_exp136_recipe(tmp_path):

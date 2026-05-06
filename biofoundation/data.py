@@ -275,26 +275,33 @@ def _get_variant_window(
 
 
 @functools.cache
-def _get_token_prefix_len(tokenizer: Tokenizer) -> int:
-    """Number of tokens prepended before the DNA payload.
+def _get_special_token_counts(tokenizer: Tokenizer) -> tuple[int, int]:
+    """``(n_prefix, n_suffix)`` — special tokens auto-prepended / appended.
 
-    Mirrors the n_prefix detection in ``transform_ll_clm``: query the
-    tokenizer for ``bos_token_id`` and verify it actually appears at the
-    start of an encoded sequence (some tokenizers define the ID but don't
-    auto-insert).
+    Some tokenizers define ``bos_token_id`` / ``eos_token_id`` but don't
+    auto-insert them (HF GPT-2-style); a behavioural probe of ``encode("A")``
+    is needed to verify the actual policy.
     """
     try:
-        bos_id = tokenizer.bos_token_id
+        bos_id: int | None = tokenizer.bos_token_id
     except AttributeError:
-        return 0
-    return 1 if tokenizer.encode("A")[:1] == [bos_id] else 0
+        bos_id = None
+    try:
+        eos_id: int | None = tokenizer.eos_token_id
+    except AttributeError:
+        eos_id = None
+
+    encoded = tokenizer.encode("A")
+    n_prefix = 1 if bos_id is not None and encoded[:1] == [bos_id] else 0
+    n_suffix = 1 if eos_id is not None and encoded[-1:] == [eos_id] else 0
+    return n_prefix, n_suffix
 
 
 @functools.cache
 def _get_nucleotide_token_ids(tokenizer: Tokenizer) -> dict[str, int]:
     """Token IDs for the 4 DNA nucleotides under this tokenizer."""
-    prefix_len = _get_token_prefix_len(tokenizer)
-    return {nuc: tokenizer.encode(nuc)[prefix_len] for nuc in NUCLEOTIDES}
+    n_prefix, _ = _get_special_token_counts(tokenizer)
+    return {nuc: tokenizer.encode(nuc)[n_prefix] for nuc in NUCLEOTIDES}
 
 
 def transform_llr_mlm(
@@ -314,7 +321,8 @@ def transform_llr_mlm(
     seq, pos = _get_variant_window(example, genome, window_size)
     input_ids = torch.tensor(tokenizer.encode(seq))
     nuc_ids = _get_nucleotide_token_ids(tokenizer)
-    tokenized_pos = pos + _get_token_prefix_len(tokenizer)
+    n_prefix, _ = _get_special_token_counts(tokenizer)
+    tokenized_pos = pos + n_prefix
     input_ids[tokenized_pos] = tokenizer.mask_token_id
     return dict(
         input_ids=input_ids,
@@ -381,8 +389,8 @@ def transform_reflogprob_mlm(
     pos = example["pos"]
     assert example["seq"][pos] in NUCLEOTIDES
     input_ids = torch.tensor(tokenizer.encode(example["seq"]))
-    prefix_len = _get_token_prefix_len(tokenizer)
-    tokenized_pos = pos + prefix_len
+    n_prefix, _ = _get_special_token_counts(tokenizer)
+    tokenized_pos = pos + n_prefix
     ref = input_ids[tokenized_pos].item()
     input_ids[tokenized_pos] = tokenizer.mask_token_id
     return dict(input_ids=input_ids, pos=tokenized_pos, ref=ref)
@@ -396,7 +404,8 @@ def transform_reflogprob_clm(
     assert example["seq"][pos] in NUCLEOTIDES
     input_ids = torch.tensor(tokenizer.encode(example["seq"]))
     nuc_ids = _get_nucleotide_token_ids(tokenizer)
-    tokenized_pos = pos + _get_token_prefix_len(tokenizer)
+    n_prefix, _ = _get_special_token_counts(tokenizer)
+    tokenized_pos = pos + n_prefix
     new_input_ids = input_ids.unsqueeze(0).repeat(len(NUCLEOTIDES), 1)
     for i, nuc in enumerate(NUCLEOTIDES):
         new_input_ids[i, tokenized_pos] = nuc_ids[nuc]
@@ -440,17 +449,7 @@ def transform_ll_clm(
     seq = example["seq"]
     full_ids = tokenizer.encode(seq.upper())
 
-    try:
-        bos_id: int | None = tokenizer.bos_token_id
-    except AttributeError:
-        bos_id = None
-    try:
-        eos_id: int | None = tokenizer.eos_token_id
-    except AttributeError:
-        eos_id = None
-
-    n_prefix = 1 if bos_id is not None and full_ids[:1] == [bos_id] else 0
-    n_suffix = 1 if eos_id is not None and full_ids[-1:] == [eos_id] else 0
+    n_prefix, n_suffix = _get_special_token_counts(tokenizer)
     body_len = len(full_ids) - n_prefix - n_suffix
     assert body_len == len(seq), (
         "Char-level tokenization required for case-breakdown LL "
