@@ -247,25 +247,49 @@ def _get_variant_window(
     genome: "Genome",
     window_size: int,
 ) -> tuple[str, int]:
-    """Extract a centered window around a variant position from the genome.
+    """Extract a window around a variant position from the genome.
+
+    The variant's REF base sits at position ``window_size // 2`` (0-indexed).
+    Left flank is ``window_size // 2`` bp; right side is
+    ``window_size - window_size // 2`` bp (1 REF + remainder). Even
+    ``window_size`` is symmetric; odd ``window_size`` puts the extra base on
+    the right (e.g. 127 + 128 for ``window_size=255``).
 
     Args:
         example: Dictionary containing 'chrom', 'pos', 'ref' keys
         genome: Genome object to extract sequence from
-        window_size: Size of the window (must be even)
+        window_size: Size of the window in bp
 
     Returns:
         Tuple of (sequence, position_within_window)
     """
     center_index = example["pos"] - 1  # 1-based to 0-based
-    assert window_size % 2 == 0, "window_size must be even"
-    start = center_index - window_size // 2
-    end = center_index + window_size // 2
+    left_size = window_size // 2
+    start = center_index - left_size
+    end = start + window_size
     seq = genome(example["chrom"], start, end).upper()
     assert len(seq) == window_size
-    pos = window_size // 2
+    pos = left_size
     assert seq[pos] == example["ref"]
     return seq, pos
+
+
+def _get_token_prefix_len(tokenizer: Tokenizer) -> int:
+    """Number of special tokens prepended before the first DNA token.
+
+    Inferred by comparing ``encode("A")`` to ``encode("AA")``: both share the
+    BOS prefix and EOS suffix; the second has one extra DNA token in between.
+    Assumes per-character DNA tokenization.
+    """
+    e1 = tokenizer.encode("A")
+    e2 = tokenizer.encode("AA")
+    assert len(e2) == len(e1) + 1, (
+        f"tokenizer is not per-character: encode('A')={e1}, encode('AA')={e2}"
+    )
+    for i in range(len(e1)):
+        if e1[i] != e2[i]:
+            return i - 1
+    return len(e1) - 1
 
 
 def transform_llr_mlm(
@@ -284,12 +308,14 @@ def transform_llr_mlm(
     """
     seq, pos = _get_variant_window(example, genome, window_size)
     input_ids = torch.tensor(tokenizer.encode(seq))
-    input_ids[pos] = tokenizer.mask_token_id
+    prefix_len = _get_token_prefix_len(tokenizer)
+    tokenized_pos = pos + prefix_len
+    input_ids[tokenized_pos] = tokenizer.mask_token_id
     return dict(
         input_ids=input_ids,
-        pos=pos,
-        ref=tokenizer.encode(example["ref"])[0],
-        alt=tokenizer.encode(example["alt"])[0],
+        pos=tokenized_pos,
+        ref=tokenizer.encode(example["ref"])[prefix_len],
+        alt=tokenizer.encode(example["alt"])[prefix_len],
     )
 
 
@@ -350,9 +376,11 @@ def transform_reflogprob_mlm(
     pos = example["pos"]
     assert example["seq"][pos] in NUCLEOTIDES
     input_ids = torch.tensor(tokenizer.encode(example["seq"]))
-    ref = input_ids[pos].item()
-    input_ids[pos] = tokenizer.mask_token_id
-    return dict(input_ids=input_ids, pos=pos, ref=ref)
+    prefix_len = _get_token_prefix_len(tokenizer)
+    tokenized_pos = pos + prefix_len
+    ref = input_ids[tokenized_pos].item()
+    input_ids[tokenized_pos] = tokenizer.mask_token_id
+    return dict(input_ids=input_ids, pos=tokenized_pos, ref=ref)
 
 
 def transform_reflogprob_clm(
@@ -362,11 +390,12 @@ def transform_reflogprob_clm(
     pos = example["pos"]
     assert example["seq"][pos] in NUCLEOTIDES
     input_ids = torch.tensor(tokenizer.encode(example["seq"]))
-    ref = input_ids[pos].item()
+    prefix_len = _get_token_prefix_len(tokenizer)
+    tokenized_pos = pos + prefix_len
     # Create 4 copies of the input sequence
     new_input_ids = input_ids.unsqueeze(0).repeat(len(NUCLEOTIDES), 1)
     for i, nuc in enumerate(NUCLEOTIDES):
-        new_input_ids[i, pos] = tokenizer.encode(nuc)[0]
+        new_input_ids[i, tokenized_pos] = tokenizer.encode(nuc)[prefix_len]
     ref = NUCLEOTIDES.index(example["seq"][pos])
     return dict(input_ids=new_input_ids, ref=ref)
 
