@@ -124,8 +124,12 @@ def _logits_to_logprobs(
     Computes the log-likelihoods using a softmax along the vocab dimension.
     Uses the `input_ids` to index into the log-likelihoods and returns the likelihood
     of the provided sequence at each position with dimension (batch, length-1).
+
+    Logits are cast to fp32 before log_softmax: bf16 log_softmax has
+    ~10^-3 per-token rounding error that compounds across the sequence
+    sum in ``_clm_seq_logprob`` (see issue #21).
     """
-    softmax_logprobs = torch.log_softmax(logits, dim=-1)
+    softmax_logprobs = torch.log_softmax(logits.float(), dim=-1)
     softmax_logprobs = softmax_logprobs[:, :-1]
     input_ids = input_ids[:, 1:]
     assert softmax_logprobs.shape[1] == input_ids.shape[1]
