@@ -20,7 +20,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from biofoundation.inference import run_ll_clm
 from biofoundation.model.adapters.hf import HFCausalLM, HFTokenizer
 from biofoundation.model.base import CausalLM
-from biofoundation.model.scoring import compute_ll_clm
+from biofoundation.model.scoring import _logits_to_logprobs, compute_ll_clm
 
 
 TINY_CLM = "hf-internal-testing/tiny-random-GPTNeoXForCausalLM"
@@ -178,7 +178,9 @@ def test_compute_ll_clm_dataset_wide_token_weighted_mean():
     is_upper[2, :2] = True
     is_upper[3, :9] = True
 
-    out = compute_ll_clm(model, input_ids, is_upper).double()  # cast for fp64 accumulate
+    out = compute_ll_clm(
+        model, input_ids, is_upper
+    ).double()  # cast for fp64 accumulate
     S_u, S_l, n_u, n_l = out.sum(dim=0).unbind(-1)
     LL_all = ((S_u + S_l) / (n_u + n_l)).item()
     LL_upper = (S_u / n_u).item()
@@ -216,7 +218,7 @@ def test_compute_ll_clm_all_upper_or_all_lower_rows_aggregate_correctly():
     model = _DeterministicCLM(logits)
 
     is_upper = torch.zeros(B, L, dtype=torch.bool)
-    is_upper[0, :] = True   # row 0: all upper (target frame too)
+    is_upper[0, :] = True  # row 0: all upper (target frame too)
     # row 1: all lower (default)
     is_upper[2, :3] = True  # row 2: mixed
 
@@ -248,6 +250,43 @@ def test_compute_ll_clm_shape_without_mask():
     out = compute_ll_clm(model, input_ids)
     assert out.shape == (B, 2)
     assert torch.all(out[:, 1] == float(L - 1))
+
+
+def test_logits_to_logprobs_promotes_bf16_to_fp32():
+    """Regression test for #21: log_softmax must run in fp32 even when
+    the model returns bf16 logits, so per-token bf16 rounding error does
+    not compound across the sequence sum.
+
+    Starting from the same bf16-rounded logits, the fp32-internal path
+    (the fix) must produce a sequence-summed log-prob closer to the full
+    fp32 reference than the bf16-internal path (the unfixed code) does.
+    """
+    torch.manual_seed(0)
+    B, L, V = 2, 256, 6  # T=256 from the issue's measurement
+    fp32_logits = torch.randn(B, L, V) * 5
+    bf16_logits = fp32_logits.to(torch.bfloat16)
+    input_ids = torch.randint(0, V, (B, L))
+
+    # The fix: fp32 internal even from bf16 input.
+    logp_fixed = _logits_to_logprobs(bf16_logits, input_ids)
+    assert logp_fixed.dtype == torch.float32
+
+    # Full fp32 path (best attainable given fp32 logits).
+    logp_fp32 = _logits_to_logprobs(fp32_logits, input_ids)
+
+    # Unfixed path: log_softmax in bf16 (inline reproduction).
+    softmax_bf16 = torch.log_softmax(bf16_logits, dim=-1)[:, :-1]
+    targets = input_ids[:, 1:]
+    logp_unfixed = (
+        torch.gather(softmax_bf16, 2, targets.unsqueeze(-1)).squeeze(-1).float()
+    )
+
+    err_fixed = (logp_fixed.sum(-1) - logp_fp32.sum(-1)).abs().max().item()
+    err_unfixed = (logp_unfixed.sum(-1) - logp_fp32.sum(-1)).abs().max().item()
+    # The unfixed path compounds bf16 log_softmax error across L-1
+    # positions on top of input-rounding error; the fix only carries the
+    # latter.
+    assert err_fixed < err_unfixed
 
 
 def test_run_ll_clm_end_to_end():
