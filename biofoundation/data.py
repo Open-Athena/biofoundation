@@ -52,7 +52,7 @@ class Genome:
     ):
         self._path: str = str(path)
         self._is_remote: bool = urlparse(self._path).scheme not in ("", "file")
-        self._storage_options: dict[str, Any] = storage_options or {}
+        self._storage_options: dict[str, Any] = dict(storage_options or {})
 
         # Probe once to capture chromosome sizes, then close so no live fd
         # is inherited across fork() into DataLoader workers.

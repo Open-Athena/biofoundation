@@ -675,6 +675,28 @@ def test_genome_ignores_storage_options_for_local_paths(tmp_path):
     assert genome("chr1", start=2, end=7) == "GTACG"
 
 
+def test_genome_forwards_storage_options_to_fsspec(monkeypatch):
+    fsspec = pytest.importorskip("fsspec")
+
+    captured = {}
+
+    class _Sentinel(Exception):
+        pass
+
+    def fake_open(path, **kwargs):
+        captured.update(path=path, kwargs=kwargs)
+        raise _Sentinel
+
+    monkeypatch.setattr(fsspec, "open", fake_open)
+
+    opts = {"anon": True, "endpoint_url": "https://example"}
+    with pytest.raises(_Sentinel):
+        Genome("s3://fake-bucket/x.fa", storage_options=opts)
+
+    assert captured["path"] == "s3://fake-bucket/x.fa"
+    assert captured["kwargs"] == {"anon": True, "endpoint_url": "https://example"}
+
+
 # GenomicSet tests
 def test_genomic_set_initialization_non_overlapping():
     """Test GenomicSet initialization with non-overlapping intervals.
