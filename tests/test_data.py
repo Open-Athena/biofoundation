@@ -655,6 +655,19 @@ def test_genome_respects_subset(tmp_path):
         genome("chr1", start=0, end=4)
 
 
+def test_genome_survives_pickle_roundtrip(tmp_path):
+    """A pickled Genome must work after unpickling (spawn-worker scenario)."""
+    import pickle
+
+    fasta_path = _write_genome_fasta(tmp_path)
+    genome = Genome(fasta_path)
+    assert genome("chr1", start=2, end=7) == "GTACG"  # populate _fa in parent
+
+    restored = pickle.loads(pickle.dumps(genome))
+    assert restored("chr1", start=2, end=7) == "GTACG"
+    assert restored("chr2", start=1, end=6, strand="-") == "GGGCC"
+
+
 # GenomicSet tests
 def test_genomic_set_initialization_non_overlapping():
     """Test GenomicSet initialization with non-overlapping intervals.
