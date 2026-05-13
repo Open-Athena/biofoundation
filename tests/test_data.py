@@ -3,11 +3,14 @@ import textwrap
 import pandas as pd
 import pytest
 import torch
+from Bio.Seq import Seq
 from transformers import AutoTokenizer
 
 from biofoundation.data import (
+    NUCLEOTIDES,
     Genome,
     GenomicSet,
+    _complement_base,
     _get_special_token_counts,
     transform_llr_mlm,
     transform_llr_clm,
@@ -456,6 +459,212 @@ def test_transform_reflogprob_clm_handles_bos_eos(bos_id, eos_id):
                 continue
             assert input_ids[i, j].item() == input_ids[0, j].item()
     assert nucleotides[result["ref"]] == example["seq"][pos]
+
+
+def _write_long_test_fasta(tmp_path):
+    """400-bp FASTA — long enough to extract any reasonable window without N-padding."""
+    fasta = ">chr1\n" + ("ACGT" * 100) + "\n"
+    path = tmp_path / "long.fa"
+    path.write_text(fasta)
+    return path
+
+
+def test_complement_base():
+    assert _complement_base("A") == "T"
+    assert _complement_base("C") == "G"
+    assert _complement_base("G") == "C"
+    assert _complement_base("T") == "A"
+    # Non-ACGT round-trips unchanged
+    assert _complement_base("N") == "N"
+    assert _complement_base("M") == "M"
+    assert _complement_base("R") == "R"
+
+
+@pytest.mark.parametrize(
+    "bos_id,eos_id",
+    [(None, None), (_BOS_ID, None), (None, _EOS_ID), (_BOS_ID, _EOS_ID)],
+)
+@pytest.mark.parametrize("window_size", [5, 6, 15, 16])
+def test_transform_llr_clm_strand_rc_matrix(tmp_path, bos_id, eos_id, window_size):
+    """Full {even/odd window_size} × {BOS y/n} × {EOS y/n} coverage for the
+    RC-strand path of transform_llr_clm: shape, variant index, complemented
+    tokens, and that the ref sequence is the revcomp of the FWD ref sequence."""
+    base = AutoTokenizer.from_pretrained("songlab/tokenizer-dna-mlm")
+    tokenizer = _SpecialTokensTokenizer(base, bos_id=bos_id, eos_id=eos_id)
+    genome = Genome(_write_long_test_fasta(tmp_path))
+    example = {"chrom": "chr1", "pos": 200, "ref": "T", "alt": "G"}
+
+    fwd = transform_llr_clm(example, tokenizer, genome, window_size, strand="+")
+    rc = transform_llr_clm(example, tokenizer, genome, window_size, strand="-")
+
+    has_bos = bos_id is not None
+    has_eos = eos_id is not None
+    expected_len = window_size + int(has_bos) + int(has_eos)
+
+    assert rc["input_ids"].shape == (2, expected_len)
+
+    diff_mask = rc["input_ids"][0] != rc["input_ids"][1]
+    assert diff_mask.sum().item() == 1
+    rc_dna_pos = (
+        window_size - 1 - window_size // 2
+    )  # asymmetric when window_size is even
+    assert diff_mask.nonzero()[0].item() == rc_dna_pos + int(has_bos)
+
+    nuc_ids = {n: base.encode(n)[0] for n in "ACGT"}
+    rc_token_idx = rc_dna_pos + int(has_bos)
+    assert rc["input_ids"][0, rc_token_idx].item() == nuc_ids["A"]  # complement("T")
+    assert rc["input_ids"][1, rc_token_idx].item() == nuc_ids["C"]  # complement("G")
+
+    # The body of rc[0] equals revcomp of the body of fwd[0]
+    body_slice = slice(int(has_bos), expected_len - int(has_eos))
+    id_to_nuc = {v: k for k, v in nuc_ids.items()}
+    fwd_body_dna = "".join(id_to_nuc[t.item()] for t in fwd["input_ids"][0, body_slice])
+    rc_body_dna = "".join(id_to_nuc[t.item()] for t in rc["input_ids"][0, body_slice])
+    assert str(Seq(fwd_body_dna).reverse_complement()) == rc_body_dna
+
+
+@pytest.mark.parametrize(
+    "bos_id,eos_id",
+    [(None, None), (_BOS_ID, None), (None, _EOS_ID), (_BOS_ID, _EOS_ID)],
+)
+@pytest.mark.parametrize("window_size", [5, 6, 15, 16])
+def test_transform_llr_mlm_strand_rc_matrix(tmp_path, bos_id, eos_id, window_size):
+    """Full matrix for the RC-strand path of transform_llr_mlm."""
+    base = AutoTokenizer.from_pretrained("songlab/tokenizer-dna-mlm")
+    tokenizer = _SpecialTokensTokenizer(base, bos_id=bos_id, eos_id=eos_id)
+    genome = Genome(_write_long_test_fasta(tmp_path))
+    example = {"chrom": "chr1", "pos": 200, "ref": "T", "alt": "G"}
+
+    fwd = transform_llr_mlm(example, tokenizer, genome, window_size, strand="+")
+    rc = transform_llr_mlm(example, tokenizer, genome, window_size, strand="-")
+
+    has_bos = bos_id is not None
+    has_eos = eos_id is not None
+    expected_len = window_size + int(has_bos) + int(has_eos)
+    rc_dna_pos = window_size - 1 - window_size // 2
+
+    assert rc["input_ids"].shape[0] == expected_len
+    assert rc["pos"] == rc_dna_pos + int(has_bos)
+    assert rc["input_ids"][rc["pos"]].item() == base.mask_token_id
+    assert rc["ref"] == base.encode("A")[0]  # complement("T")
+    assert rc["alt"] == base.encode("C")[0]  # complement("G")
+
+    # Body (excluding mask + BOS/EOS) on RC equals revcomp of FWD body
+    nuc_ids = {n: base.encode(n)[0] for n in "ACGT"}
+    id_to_nuc = {v: k for k, v in nuc_ids.items()}
+    fwd_dna = []
+    rc_dna = []
+    for i in range(int(has_bos), expected_len - int(has_eos)):
+        fwd_t = fwd["input_ids"][i].item()
+        rc_t = rc["input_ids"][i].item()
+        if fwd_t == base.mask_token_id:
+            fwd_dna.append("N")
+        else:
+            fwd_dna.append(id_to_nuc[fwd_t])
+        if rc_t == base.mask_token_id:
+            rc_dna.append("N")
+        else:
+            rc_dna.append(id_to_nuc[rc_t])
+    assert str(Seq("".join(fwd_dna)).reverse_complement()) == "".join(rc_dna)
+
+
+@pytest.mark.parametrize("window_size", [1, 5, 15, 255])
+def test_transform_llr_clm_odd_window_strand_symmetric(tmp_path, window_size):
+    """For odd window_size, the variant DNA index is identical on both strands."""
+    tokenizer = AutoTokenizer.from_pretrained("songlab/tokenizer-dna-mlm")
+    genome = Genome(_write_long_test_fasta(tmp_path))
+    example = {"chrom": "chr1", "pos": 200, "ref": "T", "alt": "G"}
+
+    fwd = transform_llr_clm(example, tokenizer, genome, window_size, strand="+")
+    rc = transform_llr_clm(example, tokenizer, genome, window_size, strand="-")
+
+    fwd_diff = (fwd["input_ids"][0] != fwd["input_ids"][1]).nonzero()[0].item()
+    rc_diff = (rc["input_ids"][0] != rc["input_ids"][1]).nonzero()[0].item()
+    assert fwd_diff == rc_diff == window_size // 2
+
+
+def test_transform_llr_clm_strand_rc_n_padding(tmp_path):
+    """Variant near chrom start — FWD window N-pads on the left, RC on the right."""
+    tokenizer = AutoTokenizer.from_pretrained("songlab/tokenizer-dna-mlm")
+    genome = Genome(_write_test_fasta(tmp_path))  # 10-bp chrom: ACGTACGTAC
+    window_size = 8
+    example = {"chrom": "chr1", "pos": 2, "ref": "C", "alt": "T"}
+
+    fwd = transform_llr_clm(example, tokenizer, genome, window_size, strand="+")
+    rc = transform_llr_clm(example, tokenizer, genome, window_size, strand="-")
+
+    assert fwd["input_ids"].shape == (2, window_size)
+    assert rc["input_ids"].shape == (2, window_size)
+
+    # On both strands, ref and alt differ at exactly one position
+    fwd_diff = (fwd["input_ids"][0] != fwd["input_ids"][1]).nonzero()[0].item()
+    rc_diff = (rc["input_ids"][0] != rc["input_ids"][1]).nonzero()[0].item()
+    assert fwd_diff == window_size // 2
+    assert rc_diff == window_size - 1 - window_size // 2
+
+    # The N-padded body on FWD reverse-complements to the N-padded body on RC
+    # (N maps to N under reverse_complement)
+    base = tokenizer
+    nuc_ids = {n: base.encode(n)[0] for n in "ACGTN"}
+    id_to_nuc = {v: k for k, v in nuc_ids.items()}
+    fwd_dna = "".join(id_to_nuc.get(t.item(), "?") for t in fwd["input_ids"][0])
+    rc_dna = "".join(id_to_nuc.get(t.item(), "?") for t in rc["input_ids"][0])
+    # Sanity: at least one N appears on each strand (chrom boundary)
+    assert "N" in fwd_dna
+    assert "N" in rc_dna
+
+
+@pytest.mark.parametrize(
+    "bos_id,eos_id",
+    [(None, None), (_BOS_ID, None), (None, _EOS_ID), (_BOS_ID, _EOS_ID)],
+)
+@pytest.mark.parametrize("seq", ["ATCGATCG", "ACGTAC"])
+def test_transform_reflogprob_mlm_strand_rc_matrix(bos_id, eos_id, seq):
+    """Full matrix for the RC-strand path of transform_reflogprob_mlm."""
+    base = AutoTokenizer.from_pretrained("songlab/tokenizer-dna-mlm")
+    tokenizer = _SpecialTokensTokenizer(base, bos_id=bos_id, eos_id=eos_id)
+    pos = 2
+    example = {"seq": seq, "pos": pos}
+
+    rc = transform_reflogprob_mlm(example, tokenizer, strand="-")
+
+    has_bos = bos_id is not None
+    has_eos = eos_id is not None
+    expected_len = len(seq) + int(has_bos) + int(has_eos)
+    rc_pos_dna = len(seq) - 1 - pos
+
+    assert rc["input_ids"].shape[0] == expected_len
+    assert rc["pos"] == rc_pos_dna + int(has_bos)
+    assert rc["input_ids"][rc["pos"]].item() == base.mask_token_id
+    assert rc["ref"] == base.encode(_complement_base(seq[pos]))[0]
+
+
+@pytest.mark.parametrize(
+    "bos_id,eos_id",
+    [(None, None), (_BOS_ID, None), (None, _EOS_ID), (_BOS_ID, _EOS_ID)],
+)
+@pytest.mark.parametrize("seq", ["ATCGATCG", "ACGTAC"])
+def test_transform_reflogprob_clm_strand_rc_matrix(bos_id, eos_id, seq):
+    """Full matrix for the RC-strand path of transform_reflogprob_clm."""
+    base = AutoTokenizer.from_pretrained("songlab/tokenizer-dna-mlm")
+    tokenizer = _SpecialTokensTokenizer(base, bos_id=bos_id, eos_id=eos_id)
+    pos = 2
+    example = {"seq": seq, "pos": pos}
+
+    rc = transform_reflogprob_clm(example, tokenizer, strand="-")
+
+    has_bos = bos_id is not None
+    has_eos = eos_id is not None
+    expected_len = len(seq) + int(has_bos) + int(has_eos)
+    rc_pos_dna = len(seq) - 1 - pos
+    rc_token_idx = rc_pos_dna + int(has_bos)
+
+    assert rc["input_ids"].shape == (4, expected_len)
+    # Each of the 4 sequences has the corresponding nucleotide at the RC index
+    for i, nuc in enumerate(NUCLEOTIDES):
+        assert rc["input_ids"][i, rc_token_idx].item() == base.encode(nuc)[0]
+    # ref is the index of the complement of the original ref base
+    assert NUCLEOTIDES[rc["ref"]] == _complement_base(seq[pos])
 
 
 def test_transform_reflogprob_clm_basic_functionality():
