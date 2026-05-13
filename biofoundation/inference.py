@@ -62,13 +62,12 @@ def _run_strand_aware(
     rc_avg: bool = False,
     **kwargs: Any,
 ) -> Any:
-    """Run inference once (FWD) or twice (FWD + RC) and average.
+    """Run inference once on the forward strand; if ``rc_avg=True``, also run
+    on the reverse-complemented strand and return the element-wise mean.
 
-    When ``rc_avg=True``, calls ``run_inference`` with ``strand="+"`` and then
-    ``strand="-"`` (bound into ``transform_fn`` via ``partial``) and returns
-    the element-wise mean of the two predictions arrays — element-wise so it
-    works for shape ``[N]`` (e.g. ``run_llr_clm``) and ``[N, 3]`` (e.g.
-    ``run_llr_and_embedding_distance``).
+    ``strand`` is bound into ``transform_fn`` via ``partial``. Averaging is
+    element-wise on numpy arrays, so it works for shape ``[N]`` (e.g.
+    ``run_llr_clm``) and ``[N, 3]`` (``run_llr_and_embedding_distance``).
     """
 
     def _one(strand: Literal["+", "-"]) -> Any:

@@ -284,6 +284,10 @@ def _get_variant_window(
     (equal to the forward index for odd ``window_size``; shifted by 1 for
     even). The base at that index equals ``complement(example["ref"])``.
 
+    For FWD/RC strand averaging, odd ``window_size`` gives symmetric left/right
+    context lengths across strands and is the cleanest choice; even sizes are
+    supported but the variant's left-context length differs by 1 between strands.
+
     Args:
         example: Dictionary containing 'chrom', 'pos', 'ref' keys
         genome: Genome object to extract sequence from

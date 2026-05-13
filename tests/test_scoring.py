@@ -33,14 +33,16 @@ from biofoundation.data import (
 from biofoundation.inference import (
     run_inference,
     run_ll_clm,
+    run_llr_and_embedding_distance,
     run_llr_clm,
     run_llr_mlm,
     run_reflogprob_clm,
 )
 from biofoundation.model.adapters.hf import HFCausalLM, HFMaskedLM, HFTokenizer
-from biofoundation.model.base import CausalLM
+from biofoundation.model.base import CausalLM, CausalLMWithEmbeddings
 from biofoundation.model.scoring import (
     _logits_to_logprobs,
+    compute_llr_and_embedding_distance,
     compute_llr_clm,
     compute_llr_mlm,
     compute_ll_clm,
@@ -518,6 +520,78 @@ def test_run_reflogprob_clm_rc_avg_equals_mean_of_two_passes():
         inference_kwargs=_INFERENCE_KWARGS,
     )
 
+    np.testing.assert_allclose(
+        avg, (np.asarray(fwd) + np.asarray(rc)) / 2, rtol=1e-5, atol=1e-6
+    )
+    assert not np.allclose(fwd, rc, atol=1e-6)
+
+
+class _DeterministicCausalLMWithEmbeddings(CausalLMWithEmbeddings):
+    """Returns content-dependent (logits, last_emb, middle_emb) so that two
+    different input batches produce two different outputs — enough to verify
+    that the rc_avg=True path of run_llr_and_embedding_distance correctly
+    averages the FWD and RC [N, 3] predictions."""
+
+    def __init__(self, vocab_size: int, emb_dim: int):
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.emb_dim = emb_dim
+
+    def forward(self, input_ids):  # type: ignore[override]
+        x = input_ids.float()
+        logits = x.unsqueeze(-1).repeat(1, 1, self.vocab_size).contiguous()
+        logits = logits + torch.arange(self.vocab_size, dtype=torch.float)
+        last = x.unsqueeze(-1).repeat(1, 1, self.emb_dim).contiguous()
+        middle = (x.unsqueeze(-1) * 2).repeat(1, 1, self.emb_dim).contiguous()
+        return logits, last, middle
+
+
+def test_run_llr_and_embedding_distance_rc_avg_equals_mean_of_two_passes(tmp_path):
+    """End-to-end smoke test for the [N, 3] return shape — the path the
+    issue #24 specifically called out as the primary VEP entrypoint."""
+    torch.manual_seed(0)
+    tokenizer = HFTokenizer(AutoTokenizer.from_pretrained("songlab/tokenizer-dna-mlm"))
+    model = _DeterministicCausalLMWithEmbeddings(vocab_size=8, emb_dim=4)
+    model.eval()
+    genome = Genome(_write_long_fasta(tmp_path))
+    dataset = _make_variant_dataset()
+    window_size = 16
+
+    fwd = run_llr_and_embedding_distance(
+        model,
+        tokenizer,
+        dataset,
+        genome,
+        window_size,
+        rc_avg=False,
+        data_transform_on_the_fly=True,
+        inference_kwargs=_INFERENCE_KWARGS,
+    )
+    rc = run_inference(
+        model,
+        tokenizer,
+        dataset,
+        compute_fn=compute_llr_and_embedding_distance,
+        data_transform_fn=partial(
+            transform_llr_clm, genome=genome, window_size=window_size, strand="-"
+        ),
+        data_transform_on_the_fly=True,
+        inference_kwargs=_INFERENCE_KWARGS,
+    )
+    avg = run_llr_and_embedding_distance(
+        model,
+        tokenizer,
+        dataset,
+        genome,
+        window_size,
+        rc_avg=True,
+        data_transform_on_the_fly=True,
+        inference_kwargs=_INFERENCE_KWARGS,
+    )
+
+    assert fwd.shape == (4, 3)
+    assert rc.shape == (4, 3)
+    assert avg.shape == (4, 3)
     np.testing.assert_allclose(
         avg, (np.asarray(fwd) + np.asarray(rc)) / 2, rtol=1e-5, atol=1e-6
     )
