@@ -48,7 +48,6 @@ class Genome:
     ):
         self._path: str = str(path)
         self._is_remote: bool = urlparse(self._path).scheme not in ("", "file")
-        self._subset_chroms = subset_chroms
 
         # Probe once to capture chromosome sizes, then close so no live fd
         # is inherited across fork() into DataLoader workers.
@@ -56,7 +55,6 @@ class Genome:
             keys = [k for k in fa.keys() if subset_chroms is None or k in subset_chroms]
             self._chrom_sizes: dict[str, int] = {k: len(fa[k]) for k in keys}
 
-        # Per-process Fasta handle, opened lazily on first __call__.
         self._fa: Fasta | None = None
         self._fa_pid: int = -1
 
@@ -68,7 +66,6 @@ class Genome:
         return Fasta(self._path, as_raw=True)
 
     def _fasta(self) -> Fasta:
-        # Reopen when we cross a process boundary (fork or spawn).
         pid = os.getpid()
         if self._fa is None or self._fa_pid != pid:
             self._fa = self._open_fasta()
