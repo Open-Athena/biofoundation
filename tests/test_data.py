@@ -668,6 +668,13 @@ def test_genome_survives_pickle_roundtrip(tmp_path):
     assert restored("chr2", start=1, end=6, strand="-") == "GGGCC"
 
 
+def test_genome_ignores_storage_options_for_local_paths(tmp_path):
+    fasta_path = _write_genome_fasta(tmp_path)
+    genome = Genome(fasta_path, storage_options={"anon": True, "ignored": "kw"})
+
+    assert genome("chr1", start=2, end=7) == "GTACG"
+
+
 # GenomicSet tests
 def test_genomic_set_initialization_non_overlapping():
     """Test GenomicSet initialization with non-overlapping intervals.

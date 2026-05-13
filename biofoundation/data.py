@@ -39,15 +39,20 @@ class Genome:
     Args:
         path: Local filesystem path or fsspec-compatible URL.
         subset_chroms: If given, only chromosomes in this set are exposed.
+        storage_options: Forwarded to ``fsspec.open`` for remote paths
+            (e.g. ``{"anon": True}`` for public S3 buckets). Ignored for
+            local paths.
     """
 
     def __init__(
         self,
         path: str | Path,
         subset_chroms: set[str] | None = None,
+        storage_options: dict[str, Any] | None = None,
     ):
         self._path: str = str(path)
         self._is_remote: bool = urlparse(self._path).scheme not in ("", "file")
+        self._storage_options: dict[str, Any] = storage_options or {}
 
         # Probe once to capture chromosome sizes, then close so no live fd
         # is inherited across fork() into DataLoader workers.
@@ -62,7 +67,7 @@ class Genome:
         if self._is_remote:
             import fsspec
 
-            return Fasta(fsspec.open(self._path), as_raw=True)
+            return Fasta(fsspec.open(self._path, **self._storage_options), as_raw=True)
         return Fasta(self._path, as_raw=True)
 
     def _fasta(self) -> Fasta:
