@@ -655,6 +655,48 @@ def test_genome_respects_subset(tmp_path):
         genome("chr1", start=0, end=4)
 
 
+def test_genome_survives_pickle_roundtrip(tmp_path):
+    """A pickled Genome must work after unpickling (spawn-worker scenario)."""
+    import pickle
+
+    fasta_path = _write_genome_fasta(tmp_path)
+    genome = Genome(fasta_path)
+    assert genome("chr1", start=2, end=7) == "GTACG"  # populate _fa in parent
+
+    restored = pickle.loads(pickle.dumps(genome))
+    assert restored("chr1", start=2, end=7) == "GTACG"
+    assert restored("chr2", start=1, end=6, strand="-") == "GGGCC"
+
+
+def test_genome_ignores_storage_options_for_local_paths(tmp_path):
+    fasta_path = _write_genome_fasta(tmp_path)
+    genome = Genome(fasta_path, storage_options={"anon": True, "ignored": "kw"})
+
+    assert genome("chr1", start=2, end=7) == "GTACG"
+
+
+def test_genome_forwards_storage_options_to_fsspec(monkeypatch):
+    fsspec = pytest.importorskip("fsspec")
+
+    captured = {}
+
+    class _Sentinel(Exception):
+        pass
+
+    def fake_open(path, **kwargs):
+        captured.update(path=path, kwargs=kwargs)
+        raise _Sentinel
+
+    monkeypatch.setattr(fsspec, "open", fake_open)
+
+    opts = {"anon": True, "endpoint_url": "https://example"}
+    with pytest.raises(_Sentinel):
+        Genome("s3://fake-bucket/x.fa", storage_options=opts)
+
+    assert captured["path"] == "s3://fake-bucket/x.fa"
+    assert captured["kwargs"] == {"anon": True, "endpoint_url": "https://example"}
+
+
 # GenomicSet tests
 def test_genomic_set_initialization_non_overlapping():
     """Test GenomicSet initialization with non-overlapping intervals.

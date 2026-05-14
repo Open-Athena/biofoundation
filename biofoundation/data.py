@@ -1,14 +1,15 @@
 import functools
-import gzip
+import os
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal
+from urllib.parse import urlparse
 
 import bioframe as bf
 import numpy as np
 import pandas as pd
 import torch
-from Bio import SeqIO
 from Bio.Seq import Seq
+from pyfaidx import Fasta
 
 from biofoundation.model.base import Tokenizer
 
@@ -19,15 +20,62 @@ VARIANT_COORDS = ["chrom", "pos", "ref", "alt"]
 
 
 class Genome:
+    """Random-access FASTA reader backed by :mod:`pyfaidx`.
+
+    Sequences are read on demand from the FASTA file rather than loaded into
+    memory upfront, so ``Genome(...)`` is fast to construct and uses
+    near-zero baseline memory.
+
+    A samtools-compatible ``.fai`` index is required. For local files, pyfaidx
+    creates one next to the FASTA on first open. For remote paths
+    (e.g. ``s3://``), the ``.fai`` must already exist alongside the FASTA.
+
+    Gzipped FASTA input must be **bgzipped** (BGZF, with a ``.gzi``
+    companion). Plain gzip is not supported — re-compress with ``bgzip``.
+
+    Remote paths (``s3://``, etc.) require the optional ``s3`` extra
+    (``pip install -e .[s3]``), which pulls in ``fsspec`` and ``s3fs``.
+
+    Args:
+        path: Local filesystem path or fsspec-compatible URL.
+        subset_chroms: If given, only chromosomes in this set are exposed.
+        storage_options: Forwarded to ``fsspec.open`` for remote paths
+            (e.g. ``{"anon": True}`` for public S3 buckets). Ignored for
+            local paths.
+    """
+
     def __init__(
         self,
         path: str | Path,
         subset_chroms: set[str] | None = None,
+        storage_options: dict[str, Any] | None = None,
     ):
-        self._genome: pd.Series = read_fasta(path, subset_chroms=subset_chroms)
-        self._chrom_sizes: dict[str, int] = {
-            chrom: len(seq) for chrom, seq in self._genome.items()
-        }
+        self._path: str = str(path)
+        self._is_remote: bool = urlparse(self._path).scheme not in ("", "file")
+        self._storage_options: dict[str, Any] = dict(storage_options or {})
+
+        # Probe once to capture chromosome sizes, then close so no live fd
+        # is inherited across fork() into DataLoader workers.
+        with self._open_fasta() as fa:
+            keys = [k for k in fa.keys() if subset_chroms is None or k in subset_chroms]
+            self._chrom_sizes: dict[str, int] = {k: len(fa[k]) for k in keys}
+
+        self._fa: Fasta | None = None
+        self._fa_pid: int = -1
+
+    def _open_fasta(self) -> Fasta:
+        if self._is_remote:
+            import fsspec
+
+            return Fasta(fsspec.open(self._path, **self._storage_options), as_raw=True)
+        return Fasta(self._path, as_raw=True)
+
+    def _fasta(self) -> Fasta:
+        pid = os.getpid()
+        if self._fa is None or self._fa_pid != pid:
+            self._fa = self._open_fasta()
+            self._fa_pid = pid
+        return self._fa
 
     def __call__(
         self,
@@ -47,7 +95,7 @@ class Genome:
             end: The end position of the sequence (0-based, exclusive).
             strand: The strand of the sequence (+ or -).
         """
-        if chrom not in self._genome:
+        if chrom not in self._chrom_sizes:
             raise ValueError(f"chromosome {chrom} not found in genome")
         chrom_size = self._chrom_sizes[chrom]
         if strand not in {"+", "-"}:
@@ -59,7 +107,7 @@ class Genome:
         if start >= chrom_size:
             raise ValueError(f"start {start} is out of range for chromosome {chrom}")
 
-        seq = self._genome[chrom][max(start, 0) : min(end, chrom_size)]
+        seq: str = self._fasta()[chrom][max(start, 0) : min(end, chrom_size)]
 
         if start < 0:
             seq = "N" * (-start) + seq  # left padding
@@ -68,7 +116,14 @@ class Genome:
 
         if strand == "-":
             seq = str(Seq(seq).reverse_complement())  # type: ignore[no-untyped-call]
-        return cast(str, seq)
+        return seq
+
+    def __getstate__(self) -> dict[str, Any]:
+        # Don't pickle the live Fasta handle: its fd is invalid in a spawn worker.
+        state = self.__dict__.copy()
+        state["_fa"] = None
+        state["_fa_pid"] = -1
+        return state
 
 
 class GenomicSet:
@@ -462,18 +517,3 @@ def transform_ll_clm(
         input_ids=torch.tensor(full_ids, dtype=torch.long),
         is_upper=torch.tensor(is_upper, dtype=torch.bool),
     )
-
-
-def read_fasta(
-    path: str | Path,
-    subset_chroms: set[str] | None = None,
-) -> pd.Series:
-    with gzip.open(path, "rt") if str(path).endswith(".gz") else open(path) as handle:
-        genome = pd.Series(
-            {
-                rec.id: str(rec.seq)
-                for rec in SeqIO.parse(handle, "fasta")  # type: ignore[no-untyped-call]
-                if subset_chroms is None or rec.id in subset_chroms
-            }
-        )
-    return genome
