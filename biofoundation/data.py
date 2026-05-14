@@ -18,6 +18,27 @@ NUCLEOTIDES = list("ACGT")
 INTERVAL_COORDS = ["chrom", "start", "end"]
 VARIANT_COORDS = ["chrom", "pos", "ref", "alt"]
 
+_DNA_COMPLEMENT = {"A": "T", "C": "G", "G": "C", "T": "A"}
+
+
+def _complement_base(base: str) -> str:
+    """Complement A/C/G/T; pass any other character through unchanged.
+
+    Non-ACGT inputs (N, IUPAC codes, etc.) round-trip via the unchanged
+    branch — downstream DNA tokenizers collapse them to a single unknown
+    token regardless, so the exact value returned here is moot.
+    """
+    return _DNA_COMPLEMENT.get(base, base)
+
+
+def _maybe_rc(seq: str, pos: int, strand: Literal["+", "-"]) -> tuple[str, int]:
+    """If ``strand == "-"``, reverse-complement ``seq`` and map ``pos`` to
+    its position in the RC string. Otherwise return inputs unchanged."""
+    if strand == "-":
+        seq = str(Seq(seq).reverse_complement())  # type: ignore[no-untyped-call]
+        pos = len(seq) - 1 - pos
+    return seq, pos
+
 
 class Genome:
     """Random-access FASTA reader backed by :mod:`pyfaidx`.
@@ -302,19 +323,32 @@ def _get_variant_window(
     example: dict[str, Any],
     genome: "Genome",
     window_size: int,
+    strand: Literal["+", "-"] = "+",
 ) -> tuple[str, int]:
     """Extract a window around a variant position from the genome.
 
-    The window splits as ``left_flank | REF | right_flank``, with
+    The forward (``strand="+"``) window splits as
+    ``left_flank | REF | right_flank``, with
     ``left_flank = window_size // 2`` bp and
     ``right_flank = window_size - window_size // 2 - 1`` bp. Odd
     ``window_size`` is symmetric (e.g. 127 + 1 + 127 = 255); even
     ``window_size`` puts the extra base in the left flank (e.g. 2 + 1 + 1 = 4).
 
+    With ``strand="-"``, the same genomic interval is returned reverse-
+    complemented. The variant moves to index ``window_size - 1 - window_size // 2``
+    (equal to the forward index for odd ``window_size``; shifted by 1 for
+    even). The base at that index equals ``complement(example["ref"])``.
+
+    For FWD/RC strand averaging, odd ``window_size`` gives symmetric left/right
+    context lengths across strands and is the cleanest choice; even sizes are
+    supported but the variant's left-context length differs by 1 between strands.
+
     Args:
         example: Dictionary containing 'chrom', 'pos', 'ref' keys
         genome: Genome object to extract sequence from
         window_size: Size of the window in bp
+        strand: ``"+"`` for the forward strand (default), ``"-"`` for the
+            reverse-complemented window.
 
     Returns:
         Tuple of (sequence, position_within_window)
@@ -323,9 +357,13 @@ def _get_variant_window(
     pos = window_size // 2
     start = center_index - pos
     end = start + window_size
-    seq = genome(example["chrom"], start, end).upper()
+    seq = genome(example["chrom"], start, end, strand=strand).upper()
     assert len(seq) == window_size
-    assert seq[pos] == example["ref"]
+    if strand == "-":
+        pos = window_size - 1 - pos
+        assert seq[pos] == _complement_base(example["ref"])
+    else:
+        assert seq[pos] == example["ref"]
     return seq, pos
 
 
@@ -364,6 +402,7 @@ def transform_llr_mlm(
     tokenizer: Tokenizer,
     genome: Genome,
     window_size: int,
+    strand: Literal["+", "-"] = "+",
 ) -> dict[str, Any]:
     """Prepare an example for masked language modeling log likelihood ratio scoring.
 
@@ -372,18 +411,25 @@ def transform_llr_mlm(
     centered window from the provided genome, masks the reference position, and
     returns tokenized tensors along with the reference and alternate token
     encodings.
+
+    With ``strand="-"``, the window is reverse-complemented and the ref/alt
+    nucleotides are complemented before the ``nuc_ids`` lookup. The masked
+    position is at the corresponding RC-strand DNA index, then shifted by
+    any BOS prefix the tokenizer auto-inserts.
     """
-    seq, pos = _get_variant_window(example, genome, window_size)
+    seq, pos = _get_variant_window(example, genome, window_size, strand=strand)
     input_ids = torch.tensor(tokenizer.encode(seq))
     nuc_ids = _get_nucleotide_token_ids(tokenizer)
     n_prefix, _ = _get_special_token_counts(tokenizer)
     tokenized_pos = pos + n_prefix
     input_ids[tokenized_pos] = tokenizer.mask_token_id
+    ref = example["ref"] if strand == "+" else _complement_base(example["ref"])
+    alt = example["alt"] if strand == "+" else _complement_base(example["alt"])
     return dict(
         input_ids=input_ids,
         pos=tokenized_pos,
-        ref=nuc_ids[example["ref"]],
-        alt=nuc_ids[example["alt"]],
+        ref=nuc_ids[ref],
+        alt=nuc_ids[alt],
     )
 
 
@@ -392,6 +438,7 @@ def transform_llr_clm(
     tokenizer: Tokenizer,
     genome: Genome,
     window_size: int,
+    strand: Literal["+", "-"] = "+",
 ) -> dict[str, Any]:
     """Prepare an example for causal language modeling log likelihood ratio scoring.
 
@@ -399,10 +446,15 @@ def transform_llr_clm(
     coordinate and `ref`/`alt` are single nucleotides. The function extracts a
     centered window from the provided genome, creates two sequences (ref and alt),
     and returns tokenized tensors stacked together.
+
+    With ``strand="-"``, the window is reverse-complemented and ``alt`` is
+    complemented before substitution; the variant ends up at the RC-strand
+    DNA index inside the window.
     """
-    seq, pos = _get_variant_window(example, genome, window_size)
+    seq, pos = _get_variant_window(example, genome, window_size, strand=strand)
+    alt = example["alt"] if strand == "+" else _complement_base(example["alt"])
     ref_seq = seq
-    alt_seq = seq[:pos] + example["alt"] + seq[pos + 1 :]
+    alt_seq = seq[:pos] + alt + seq[pos + 1 :]
     input_ids = torch.stack(
         [
             torch.tensor(tokenizer.encode(ref_seq)),
@@ -415,6 +467,7 @@ def transform_llr_clm(
 def transform_reflogprob_mlm(
     example: dict[str, Any],
     tokenizer: Tokenizer,
+    strand: Literal["+", "-"] = "+",
 ) -> dict[str, Any]:
     """Transform a sequence example for reference log probability MLM inference.
 
@@ -423,10 +476,17 @@ def transform_reflogprob_mlm(
     2. Masking a specific position in the sequence
     3. Recording the reference token at that position
 
+    With ``strand="-"``, the input sequence is reverse-complemented and the
+    position is mapped to ``len(seq) - 1 - pos`` before tokenization. The
+    recorded ``ref`` is then automatically the token id of the complemented
+    base.
+
     Args:
         example: Dictionary containing the sequence data. Must have a key matching
             `seq_col` that contains the input sequence.
         tokenizer: Tokenizer for converting text to token IDs.
+        strand: ``"+"`` for the forward strand (default), ``"-"`` for the
+            reverse-complemented strand.
 
     Returns:
         Dictionary with three keys:
@@ -441,9 +501,9 @@ def transform_reflogprob_mlm(
         >>> print(result)
         {'input_ids': tensor([...]), 'pos': 1, 'ref': 3}
     """
-    pos = example["pos"]
-    assert example["seq"][pos] in NUCLEOTIDES
-    input_ids = torch.tensor(tokenizer.encode(example["seq"]))
+    assert example["seq"][example["pos"]] in NUCLEOTIDES
+    seq, pos = _maybe_rc(example["seq"], example["pos"], strand)
+    input_ids = torch.tensor(tokenizer.encode(seq))
     n_prefix, _ = _get_special_token_counts(tokenizer)
     tokenized_pos = pos + n_prefix
     ref = input_ids[tokenized_pos].item()
@@ -454,17 +514,29 @@ def transform_reflogprob_mlm(
 def transform_reflogprob_clm(
     example: dict[str, Any],
     tokenizer: Tokenizer,
+    strand: Literal["+", "-"] = "+",
 ) -> dict[str, Any]:
-    pos = example["pos"]
-    assert example["seq"][pos] in NUCLEOTIDES
-    input_ids = torch.tensor(tokenizer.encode(example["seq"]))
+    """Transform a sequence example for reference log probability CLM inference.
+
+    Produces a ``[4, L]`` tensor with all four nucleotides substituted at the
+    specified position. The ``ref`` field is the index into ``NUCLEOTIDES``
+    (``A``/``C``/``G``/``T``) of the reference base at that position.
+
+    With ``strand="-"``, the input sequence is reverse-complemented and the
+    position is mapped to ``len(seq) - 1 - pos``. ``ref`` is then the index
+    of the complemented base (because ``seq[pos]`` after RC is the complement
+    of the original) — no extra complementation logic needed at the lookup.
+    """
+    assert example["seq"][example["pos"]] in NUCLEOTIDES
+    seq, pos = _maybe_rc(example["seq"], example["pos"], strand)
+    input_ids = torch.tensor(tokenizer.encode(seq))
     nuc_ids = _get_nucleotide_token_ids(tokenizer)
     n_prefix, _ = _get_special_token_counts(tokenizer)
     tokenized_pos = pos + n_prefix
     new_input_ids = input_ids.unsqueeze(0).repeat(len(NUCLEOTIDES), 1)
     for i, nuc in enumerate(NUCLEOTIDES):
         new_input_ids[i, tokenized_pos] = nuc_ids[nuc]
-    ref = NUCLEOTIDES.index(example["seq"][pos])
+    ref = NUCLEOTIDES.index(seq[pos])
     return dict(input_ids=new_input_ids, ref=ref)
 
 

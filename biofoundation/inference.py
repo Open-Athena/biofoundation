@@ -1,8 +1,9 @@
 import datasets
+import numpy as np
 import tempfile
 import torch.nn as nn
 from transformers import Trainer, TrainingArguments
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 from functools import partial
 
 from biofoundation.model.base import Tokenizer
@@ -50,17 +51,42 @@ def run_inference(
     )
 
 
-run_reflogprob_mlm = partial(
-    run_inference,
-    compute_fn=compute_reflogprob_mlm,
-    data_transform_fn=transform_reflogprob_mlm,
-)
+def _run_strand_aware(
+    model: nn.Module,
+    tokenizer: Tokenizer,
+    dataset: datasets.Dataset,
+    *,
+    compute_fn: Callable[..., Any],
+    transform_fn: Callable[..., dict[str, Any]],
+    transform_kwargs: dict[str, Any] | None = None,
+    rc_avg: bool = False,
+    **kwargs: Any,
+) -> Any:
+    """Run inference once on the forward strand; if ``rc_avg=True``, also run
+    on the reverse-complemented strand and return the element-wise mean.
 
-run_reflogprob_clm = partial(
-    run_inference,
-    compute_fn=compute_reflogprob_clm,
-    data_transform_fn=transform_reflogprob_clm,
-)
+    ``strand`` is bound into ``transform_fn`` via ``partial``. Averaging is
+    element-wise on numpy arrays, so it works for shape ``[N]`` (e.g.
+    ``run_llr_clm``) and ``[N, 3]`` (``run_llr_and_embedding_distance``).
+    """
+
+    def _one(strand: Literal["+", "-"]) -> Any:
+        return run_inference(
+            model,
+            tokenizer,
+            dataset,
+            compute_fn=compute_fn,
+            data_transform_fn=partial(
+                transform_fn, strand=strand, **(transform_kwargs or {})
+            ),
+            **kwargs,
+        )
+
+    fwd = _one("+")
+    if not rc_avg:
+        return fwd
+    rc = _one("-")
+    return (np.asarray(fwd) + np.asarray(rc)) / 2
 
 
 run_ll_clm = partial(
@@ -70,22 +96,59 @@ run_ll_clm = partial(
 )
 
 
+def run_reflogprob_mlm(
+    model: nn.Module,
+    tokenizer: Tokenizer,
+    dataset: datasets.Dataset,
+    rc_avg: bool = False,
+    **kwargs: Any,
+) -> Any:
+    return _run_strand_aware(
+        model,
+        tokenizer,
+        dataset,
+        compute_fn=compute_reflogprob_mlm,
+        transform_fn=transform_reflogprob_mlm,
+        rc_avg=rc_avg,
+        **kwargs,
+    )
+
+
+def run_reflogprob_clm(
+    model: nn.Module,
+    tokenizer: Tokenizer,
+    dataset: datasets.Dataset,
+    rc_avg: bool = False,
+    **kwargs: Any,
+) -> Any:
+    return _run_strand_aware(
+        model,
+        tokenizer,
+        dataset,
+        compute_fn=compute_reflogprob_clm,
+        transform_fn=transform_reflogprob_clm,
+        rc_avg=rc_avg,
+        **kwargs,
+    )
+
+
 def run_llr_mlm(
     model: nn.Module,
     tokenizer: Tokenizer,
     dataset: datasets.Dataset,
     genome: Genome,
     window_size: int,
+    rc_avg: bool = False,
     **kwargs: Any,
 ) -> Any:
-    return run_inference(
+    return _run_strand_aware(
         model,
         tokenizer,
         dataset,
         compute_fn=compute_llr_mlm,
-        data_transform_fn=partial(
-            transform_llr_mlm, genome=genome, window_size=window_size
-        ),
+        transform_fn=transform_llr_mlm,
+        transform_kwargs=dict(genome=genome, window_size=window_size),
+        rc_avg=rc_avg,
         **kwargs,
     )
 
@@ -96,16 +159,17 @@ def run_llr_clm(
     dataset: datasets.Dataset,
     genome: Genome,
     window_size: int,
+    rc_avg: bool = False,
     **kwargs: Any,
 ) -> Any:
-    return run_inference(
+    return _run_strand_aware(
         model,
         tokenizer,
         dataset,
         compute_fn=compute_llr_clm,
-        data_transform_fn=partial(
-            transform_llr_clm, genome=genome, window_size=window_size
-        ),
+        transform_fn=transform_llr_clm,
+        transform_kwargs=dict(genome=genome, window_size=window_size),
+        rc_avg=rc_avg,
         **kwargs,
     )
 
@@ -116,16 +180,17 @@ def run_euclidean_distance(
     dataset: datasets.Dataset,
     genome: Genome,
     window_size: int,
+    rc_avg: bool = False,
     **kwargs: Any,
 ) -> Any:
-    return run_inference(
+    return _run_strand_aware(
         model,
         tokenizer,
         dataset,
         compute_fn=compute_euclidean_distance,
-        data_transform_fn=partial(
-            transform_llr_clm, genome=genome, window_size=window_size
-        ),
+        transform_fn=transform_llr_clm,
+        transform_kwargs=dict(genome=genome, window_size=window_size),
+        rc_avg=rc_avg,
         **kwargs,
     )
 
@@ -136,6 +201,7 @@ def run_llr_and_embedding_distance(
     dataset: datasets.Dataset,
     genome: Genome,
     window_size: int,
+    rc_avg: bool = False,
     **kwargs: Any,
 ) -> Any:
     """Run combined LLR and embedding distance inference.
@@ -149,6 +215,9 @@ def run_llr_and_embedding_distance(
         dataset: Dataset with variant information (chrom, pos, ref, alt)
         genome: Genome object for sequence extraction
         window_size: Window size for sequence context
+        rc_avg: If True, also score the reverse-complemented window for
+            each variant and return the element-wise average of FWD and
+            RC predictions (shape ``[N, 3]``). Doubles inference cost.
         **kwargs: Additional arguments passed to run_inference
 
     Returns:
@@ -157,14 +226,14 @@ def run_llr_and_embedding_distance(
             - [:, 1]: Last-layer embedding distance
             - [:, 2]: Middle-layer embedding distance
     """
-    return run_inference(
+    return _run_strand_aware(
         model,
         tokenizer,
         dataset,
         compute_fn=compute_llr_and_embedding_distance,
-        data_transform_fn=partial(
-            transform_llr_clm, genome=genome, window_size=window_size
-        ),
+        transform_fn=transform_llr_clm,
+        transform_kwargs=dict(genome=genome, window_size=window_size),
+        rc_avg=rc_avg,
         **kwargs,
     )
 

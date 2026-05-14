@@ -13,17 +13,45 @@ dataset-wide LL — matching how Marin/levanter computes ``eval/loss``.
 import math
 
 import datasets
+import numpy as np
+from functools import partial
+
 import torch
 from torch import Tensor
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import (
+    AutoModelForCausalLM,
+    AutoModelForMaskedLM,
+    AutoTokenizer,
+)
 
-from biofoundation.inference import run_ll_clm
-from biofoundation.model.adapters.hf import HFCausalLM, HFTokenizer
-from biofoundation.model.base import CausalLM
-from biofoundation.model.scoring import _logits_to_logprobs, compute_ll_clm
+from biofoundation.data import (
+    Genome,
+    transform_llr_clm,
+    transform_llr_mlm,
+    transform_reflogprob_clm,
+)
+from biofoundation.inference import (
+    run_inference,
+    run_ll_clm,
+    run_llr_and_embedding_distance,
+    run_llr_clm,
+    run_llr_mlm,
+    run_reflogprob_clm,
+)
+from biofoundation.model.adapters.hf import HFCausalLM, HFMaskedLM, HFTokenizer
+from biofoundation.model.base import CausalLM, CausalLMWithEmbeddings
+from biofoundation.model.scoring import (
+    _logits_to_logprobs,
+    compute_llr_and_embedding_distance,
+    compute_llr_clm,
+    compute_llr_mlm,
+    compute_ll_clm,
+    compute_reflogprob_clm,
+)
 
 
 TINY_CLM = "hf-internal-testing/tiny-random-GPTNeoXForCausalLM"
+TINY_MLM = "hf-internal-testing/tiny-random-BertForMaskedLM"
 
 
 def _load_tiny_clm():
@@ -323,3 +351,248 @@ def test_run_ll_clm_end_to_end():
     total_0 = pred[0, 0] + pred[0, 1]
     total_2 = pred[2, 0] + pred[2, 1]
     assert math.isclose(total_0, total_2, rel_tol=1e-5, abs_tol=1e-5)
+
+
+def _write_long_fasta(tmp_path):
+    """400-bp FASTA — long enough for windows up to ~200bp without N-padding."""
+    fasta = ">chr1\n" + ("ACGT" * 100) + "\n"
+    path = tmp_path / "long.fa"
+    path.write_text(fasta)
+    return path
+
+
+def _make_variant_dataset():
+    """A handful of variants at mid-chrom positions so windows don't N-pad.
+
+    Ref alleles match the underlying FASTA (``"ACGT" * 100``), so for 1-based
+    VCF position ``N`` the genome base is ``"ACGT"[(N - 1) % 4]``.
+    """
+    return datasets.Dataset.from_dict(
+        {
+            "chrom": ["chr1", "chr1", "chr1", "chr1"],
+            "pos": [99, 100, 101, 102],  # G, T, A, C
+            "ref": ["G", "T", "A", "C"],
+            "alt": ["C", "A", "T", "G"],
+        }
+    )
+
+
+_INFERENCE_KWARGS = dict(
+    per_device_eval_batch_size=2,
+    dataloader_num_workers=0,
+    remove_unused_columns=False,
+    report_to="none",
+)
+
+
+def test_run_llr_clm_rc_avg_equals_mean_of_two_passes(tmp_path):
+    """run_llr_clm(rc_avg=True) returns the element-wise mean of two single-
+    strand runs. Catches regressions in the partial / transform / compute_fn
+    wiring of the rc_avg path."""
+    torch.manual_seed(0)
+    tokenizer = HFTokenizer(AutoTokenizer.from_pretrained("songlab/tokenizer-dna-mlm"))
+    model = HFCausalLM(AutoModelForCausalLM.from_pretrained(TINY_CLM))
+    model.eval()
+    genome = Genome(_write_long_fasta(tmp_path))
+    dataset = _make_variant_dataset()
+    window_size = 16
+
+    fwd = run_llr_clm(
+        model,
+        tokenizer,
+        dataset,
+        genome,
+        window_size,
+        rc_avg=False,
+        data_transform_on_the_fly=True,
+        inference_kwargs=_INFERENCE_KWARGS,
+    )
+    rc = run_inference(
+        model,
+        tokenizer,
+        dataset,
+        compute_fn=compute_llr_clm,
+        data_transform_fn=partial(
+            transform_llr_clm, genome=genome, window_size=window_size, strand="-"
+        ),
+        data_transform_on_the_fly=True,
+        inference_kwargs=_INFERENCE_KWARGS,
+    )
+    avg = run_llr_clm(
+        model,
+        tokenizer,
+        dataset,
+        genome,
+        window_size,
+        rc_avg=True,
+        data_transform_on_the_fly=True,
+        inference_kwargs=_INFERENCE_KWARGS,
+    )
+
+    np.testing.assert_allclose(
+        avg, (np.asarray(fwd) + np.asarray(rc)) / 2, rtol=1e-5, atol=1e-6
+    )
+    # And FWD != RC for at least one variant (otherwise the test is trivial)
+    assert not np.allclose(fwd, rc, atol=1e-6)
+
+
+def test_run_llr_mlm_rc_avg_equals_mean_of_two_passes(tmp_path):
+    torch.manual_seed(0)
+    tokenizer = HFTokenizer(AutoTokenizer.from_pretrained("songlab/tokenizer-dna-mlm"))
+    model = HFMaskedLM(AutoModelForMaskedLM.from_pretrained(TINY_MLM))
+    model.eval()
+    genome = Genome(_write_long_fasta(tmp_path))
+    dataset = _make_variant_dataset()
+    window_size = 16
+
+    fwd = run_llr_mlm(
+        model,
+        tokenizer,
+        dataset,
+        genome,
+        window_size,
+        rc_avg=False,
+        data_transform_on_the_fly=True,
+        inference_kwargs=_INFERENCE_KWARGS,
+    )
+    rc = run_inference(
+        model,
+        tokenizer,
+        dataset,
+        compute_fn=compute_llr_mlm,
+        data_transform_fn=partial(
+            transform_llr_mlm, genome=genome, window_size=window_size, strand="-"
+        ),
+        data_transform_on_the_fly=True,
+        inference_kwargs=_INFERENCE_KWARGS,
+    )
+    avg = run_llr_mlm(
+        model,
+        tokenizer,
+        dataset,
+        genome,
+        window_size,
+        rc_avg=True,
+        data_transform_on_the_fly=True,
+        inference_kwargs=_INFERENCE_KWARGS,
+    )
+
+    np.testing.assert_allclose(
+        avg, (np.asarray(fwd) + np.asarray(rc)) / 2, rtol=1e-5, atol=1e-6
+    )
+    assert not np.allclose(fwd, rc, atol=1e-6)
+
+
+def test_run_reflogprob_clm_rc_avg_equals_mean_of_two_passes():
+    """Also verifies the partial-to-function refactor of run_reflogprob_clm
+    didn't break existing callers (positional/keyword args still work)."""
+    torch.manual_seed(0)
+    tokenizer = HFTokenizer(AutoTokenizer.from_pretrained("songlab/tokenizer-dna-mlm"))
+    model = HFCausalLM(AutoModelForCausalLM.from_pretrained(TINY_CLM))
+    model.eval()
+    seqs = ["ACGTACGTACGT", "TGCATGCATGCA", "AAACCCGGGTTT", "CGATCGATCGAT"]
+    pos_list = [5, 4, 6, 7]
+    dataset = datasets.Dataset.from_dict({"seq": seqs, "pos": pos_list})
+
+    fwd = run_reflogprob_clm(
+        model,
+        tokenizer,
+        dataset,
+        rc_avg=False,
+        data_transform_on_the_fly=True,
+        inference_kwargs=_INFERENCE_KWARGS,
+    )
+    rc = run_inference(
+        model,
+        tokenizer,
+        dataset,
+        compute_fn=compute_reflogprob_clm,
+        data_transform_fn=partial(transform_reflogprob_clm, strand="-"),
+        data_transform_on_the_fly=True,
+        inference_kwargs=_INFERENCE_KWARGS,
+    )
+    avg = run_reflogprob_clm(
+        model,
+        tokenizer,
+        dataset,
+        rc_avg=True,
+        data_transform_on_the_fly=True,
+        inference_kwargs=_INFERENCE_KWARGS,
+    )
+
+    np.testing.assert_allclose(
+        avg, (np.asarray(fwd) + np.asarray(rc)) / 2, rtol=1e-5, atol=1e-6
+    )
+    assert not np.allclose(fwd, rc, atol=1e-6)
+
+
+class _DeterministicCausalLMWithEmbeddings(CausalLMWithEmbeddings):
+    """Returns content-dependent (logits, last_emb, middle_emb) so that two
+    different input batches produce two different outputs — enough to verify
+    that the rc_avg=True path of run_llr_and_embedding_distance correctly
+    averages the FWD and RC [N, 3] predictions."""
+
+    def __init__(self, vocab_size: int, emb_dim: int):
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.emb_dim = emb_dim
+
+    def forward(self, input_ids):  # type: ignore[override]
+        x = input_ids.float()
+        logits = x.unsqueeze(-1).repeat(1, 1, self.vocab_size).contiguous()
+        logits = logits + torch.arange(self.vocab_size, dtype=torch.float)
+        last = x.unsqueeze(-1).repeat(1, 1, self.emb_dim).contiguous()
+        middle = (x.unsqueeze(-1) * 2).repeat(1, 1, self.emb_dim).contiguous()
+        return logits, last, middle
+
+
+def test_run_llr_and_embedding_distance_rc_avg_equals_mean_of_two_passes(tmp_path):
+    """End-to-end smoke test for the [N, 3] return shape — the path the
+    issue #24 specifically called out as the primary VEP entrypoint."""
+    torch.manual_seed(0)
+    tokenizer = HFTokenizer(AutoTokenizer.from_pretrained("songlab/tokenizer-dna-mlm"))
+    model = _DeterministicCausalLMWithEmbeddings(vocab_size=8, emb_dim=4)
+    model.eval()
+    genome = Genome(_write_long_fasta(tmp_path))
+    dataset = _make_variant_dataset()
+    window_size = 16
+
+    fwd = run_llr_and_embedding_distance(
+        model,
+        tokenizer,
+        dataset,
+        genome,
+        window_size,
+        rc_avg=False,
+        data_transform_on_the_fly=True,
+        inference_kwargs=_INFERENCE_KWARGS,
+    )
+    rc = run_inference(
+        model,
+        tokenizer,
+        dataset,
+        compute_fn=compute_llr_and_embedding_distance,
+        data_transform_fn=partial(
+            transform_llr_clm, genome=genome, window_size=window_size, strand="-"
+        ),
+        data_transform_on_the_fly=True,
+        inference_kwargs=_INFERENCE_KWARGS,
+    )
+    avg = run_llr_and_embedding_distance(
+        model,
+        tokenizer,
+        dataset,
+        genome,
+        window_size,
+        rc_avg=True,
+        data_transform_on_the_fly=True,
+        inference_kwargs=_INFERENCE_KWARGS,
+    )
+
+    assert fwd.shape == (4, 3)
+    assert rc.shape == (4, 3)
+    assert avg.shape == (4, 3)
+    np.testing.assert_allclose(
+        avg, (np.asarray(fwd) + np.asarray(rc)) / 2, rtol=1e-5, atol=1e-6
+    )
+    assert not np.allclose(fwd, rc, atol=1e-6)
